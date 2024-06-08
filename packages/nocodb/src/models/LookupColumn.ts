@@ -1,10 +1,15 @@
 import type { LookupType } from 'nocodb-sdk';
 import type { NcContext } from '~/interface/config';
 import Column from '~/models/Column';
+import { Logger } from '@nestjs/common';
+
 import Noco from '~/Noco';
 import NocoCache from '~/cache/NocoCache';
 import { extractProps } from '~/helpers/extractProps';
 import { CacheGetType, CacheScope, MetaTable } from '~/utils/globals';
+
+const logger = new Logger('LookupColumn');
+
 
 export default class LookupColumn implements LookupType {
   fk_relation_column_id: string;
@@ -76,6 +81,8 @@ export default class LookupColumn implements LookupType {
         CacheGetType.TYPE_OBJECT,
       ));
     if (!colData) {
+      logger.log("cachemiss:" + columnId)
+
       colData = await ncMeta.metaGet2(
         context.workspace_id,
         context.base_id,

@@ -18,7 +18,7 @@ import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 export class DatasService {
   protected logger = new Logger(DatasService.name);
 
-  constructor() {}
+  constructor() { }
 
   async dataList(
     context: NcContext,
@@ -79,7 +79,7 @@ export class DatasService {
     const countArgs: any = { ...param.query, throwErrorIfInvalidParams: true };
     try {
       countArgs.filterArr = JSON.parse(countArgs.filterArrJson);
-    } catch (e) {}
+    } catch (e) { }
 
     const count: number = await baseModel.count(countArgs);
 
@@ -199,10 +199,10 @@ export class DatasService {
     const listArgs: any = dependencyFields;
     try {
       listArgs.filterArr = JSON.parse(listArgs.filterArrJson);
-    } catch (e) {}
+    } catch (e) { }
     try {
       listArgs.sortArr = JSON.parse(listArgs.sortArrJson);
-    } catch (e) {}
+    } catch (e) { }
 
     listArgs.customConditions = param.customConditions;
 
@@ -211,6 +211,7 @@ export class DatasService {
       (async () => {
         let data = [];
         try {
+          this.logger.log("start count nocoExecute")
           data = await nocoExecute(
             ast,
             await baseModel.list(listArgs, {
@@ -229,6 +230,8 @@ export class DatasService {
             'Please check server log for more details',
           );
         }
+        this.logger.log("done nocoExecute")
+
         return data;
       })(),
     ]);
@@ -256,10 +259,10 @@ export class DatasService {
     const args: any = { ...query };
     try {
       args.filterArr = JSON.parse(args.filterArrJson);
-    } catch (e) {}
+    } catch (e) { }
     try {
       args.sortArr = JSON.parse(args.sortArrJson);
-    } catch (e) {}
+    } catch (e) { }
 
     const { ast, dependencyFields } = await getAst(context, {
       model,
@@ -289,10 +292,10 @@ export class DatasService {
 
     try {
       listArgs.filterArr = JSON.parse(listArgs.filterArrJson);
-    } catch (e) {}
+    } catch (e) { }
     try {
       listArgs.sortArr = JSON.parse(listArgs.sortArrJson);
-    } catch (e) {}
+    } catch (e) { }
 
     const data = await baseModel.groupBy(listArgs);
     const count = await baseModel.groupByCount(listArgs);
@@ -392,13 +395,13 @@ export class DatasService {
     const listArgs: any = { ...dependencyFields };
     try {
       listArgs.filterArr = JSON.parse(listArgs.filterArrJson);
-    } catch (e) {}
+    } catch (e) { }
     try {
       listArgs.sortArr = JSON.parse(listArgs.sortArrJson);
-    } catch (e) {}
+    } catch (e) { }
     try {
       listArgs.options = JSON.parse(listArgs.optionsArrJson);
-    } catch (e) {}
+    } catch (e) { }
 
     let data = [];
 
@@ -1041,7 +1044,7 @@ export class DatasService {
           .sort((c1, c2) =>
             Array.isArray(fields)
               ? fields.indexOf(c1.title as any) -
-                fields.indexOf(c2.title as any)
+              fields.indexOf(c2.title as any)
               : 0,
           )
           .filter(

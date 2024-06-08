@@ -204,9 +204,9 @@ export default class Column<T = any> implements ColumnType {
         column_show: {
           show:
             column.uidt === UITypes.LinkToAnotherRecord ||
-            (column.uidt === UITypes.Links &&
-              column.type === 'mm' &&
-              !column.view_id)
+              (column.uidt === UITypes.Links &&
+                column.type === 'mm' &&
+                !column.view_id)
               ? false
               : !column.view_id,
           view_id: column.view_id,
@@ -222,7 +222,7 @@ export default class Column<T = any> implements ColumnType {
   }
 
   private static async insertColOption<T>(
-    column: Partial<T> & { source_id?: string; [p: string]: any },
+    column: Partial<T> & { source_id?: string;[p: string]: any },
     colId,
     ncMeta = Noco.ncMeta,
   ) {
@@ -509,6 +509,7 @@ export default class Column<T = any> implements ColumnType {
     }, {} as Record<string, number>);
 
     if (!isNoneList && !columnsList.length) {
+      logger.log("start metaList2")
       columnsList = await ncMeta.metaList2(null, null, MetaTable.COLUMNS, {
         condition: {
           fk_model_id,
@@ -521,6 +522,7 @@ export default class Column<T = any> implements ColumnType {
       columnsList.forEach((column) => {
         column.meta = parseMetaProp(column);
       });
+      logger.log("start NocoCache.setList")
 
       await NocoCache.setList(CacheScope.COLUMN, [fk_model_id], columnsList);
     }
@@ -530,6 +532,7 @@ export default class Column<T = any> implements ColumnType {
         (a.order != null ? a.order : Infinity) -
         (b.order != null ? b.order : Infinity),
     );
+    logger.log("start getColOptions")
 
     return Promise.all(
       columnsList.map(async (m) => {
@@ -1154,7 +1157,7 @@ export default class Column<T = any> implements ColumnType {
     if (this.validate && typeof this.validate === 'string')
       try {
         return JSON.parse(this.validate);
-      } catch {}
+      } catch { }
     return null;
   }
 
@@ -1167,7 +1170,7 @@ export default class Column<T = any> implements ColumnType {
       column_name,
       fk_model_id,
       exclude_id,
-    }: { column_name; fk_model_id; exclude_id? },
+    }: { column_name; fk_model_id; exclude_id?},
     ncMeta = Noco.ncMeta,
   ) {
     return !(await ncMeta.metaGet2(
@@ -1184,7 +1187,7 @@ export default class Column<T = any> implements ColumnType {
   }
 
   static async checkAliasAvailable(
-    { title, fk_model_id, exclude_id }: { title; fk_model_id; exclude_id? },
+    { title, fk_model_id, exclude_id }: { title; fk_model_id; exclude_id?},
     ncMeta = Noco.ncMeta,
   ) {
     return !(await ncMeta.metaGet2(
@@ -1336,7 +1339,7 @@ export default class Column<T = any> implements ColumnType {
   }
 
   private static async bulkInsertColOption<T>(
-    columns: (Partial<T> & { source_id?: string; [p: string]: any })[],
+    columns: (Partial<T> & { source_id?: string;[p: string]: any })[],
     ncMeta = Noco.ncMeta,
   ) {
     const insertGroups = new Map<UITypes, Record<string, any>[]>();

@@ -356,7 +356,7 @@ class SqliteClient extends KnexClient {
     log.api(`${_func}:args:`, args);
 
     try {
-      const response = await this.sqlClient.raw(`PRAGMA table_info(??)`, [
+      const response = await this.sqlClient.raw(`PRAGMA mmap_size=468435456; PRAGMA table_info(??)`, [
         args.tn,
       ]);
 
@@ -1078,10 +1078,8 @@ class SqliteClient extends KnexClient {
     log.api(`${func}:args:`, args);
     try {
       const rows = await this.sqlClient.raw(
-        `CREATE TRIGGER ${this.genIdentifier(args.function_name)} \n${
-          args.timing
-        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-          args.statement
+        `CREATE TRIGGER ${this.genIdentifier(args.function_name)} \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
         }`,
       );
       result.data.list = rows;
@@ -1112,10 +1110,8 @@ class SqliteClient extends KnexClient {
         `DROP TRIGGER ${this.genIdentifier(args.function_name)}`,
       );
       const rows = await this.sqlClient.raw(
-        `CREATE TRIGGER ${this.genIdentifier(args.function_name)}\` \n${
-          args.timing
-        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-          args.statement
+        `CREATE TRIGGER ${this.genIdentifier(args.function_name)}\` \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
         }`,
       );
       result.data.list = rows;
@@ -1143,10 +1139,8 @@ class SqliteClient extends KnexClient {
     log.api(`${func}:args:`, args);
     try {
       const rows = await this.sqlClient.raw(
-        `CREATE TRIGGER ${this.genIdentifier(args.procedure_name)} \n${
-          args.timing
-        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-          args.statement
+        `CREATE TRIGGER ${this.genIdentifier(args.procedure_name)} \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
         }`,
       );
       result.data.list = rows;
@@ -1175,10 +1169,8 @@ class SqliteClient extends KnexClient {
     try {
       await this.sqlClient.raw(`DROP TRIGGER ${args.procedure_name}`);
       const rows = await this.sqlClient.raw(
-        `CREATE TRIGGER ${this.genIdentifier(args.procedure_name)} \n${
-          args.timing
-        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-          args.statement
+        `CREATE TRIGGER ${this.genIdentifier(args.procedure_name)} \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
         }`,
       );
       result.data.list = rows;
@@ -1207,10 +1199,8 @@ class SqliteClient extends KnexClient {
     try {
       const query =
         this.querySeparator() +
-        `CREATE TRIGGER ${this.genIdentifier(args.trigger_name)} \n${
-          args.timing
-        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-          args.statement
+        `CREATE TRIGGER ${this.genIdentifier(args.trigger_name)} \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
         }`;
       await this.sqlClient.raw(query);
       result.data.object = {
@@ -1243,20 +1233,16 @@ class SqliteClient extends KnexClient {
     try {
       await this.sqlClient.raw(`DROP TRIGGER ??`, [args.trigger_name]);
       await this.sqlClient.raw(
-        `CREATE TRIGGER ${this.genIdentifier(args.trigger_name)} \n${
-          args.timing
-        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-          args.statement
+        `CREATE TRIGGER ${this.genIdentifier(args.trigger_name)} \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
         }`,
       );
 
       const upQuery = `DROP TRIGGER ${this.genIdentifier(
         args.trigger_name,
-      )};\nCREATE TRIGGER ${this.genIdentifier(args.trigger_name)} \n${
-        args.timing
-      } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${
-        args.statement
-      }`;
+      )};\nCREATE TRIGGER ${this.genIdentifier(args.trigger_name)} \n${args.timing
+        } ${args.event}\nON ${this.genIdentifier(args.tn)} FOR EACH ROW\n${args.statement
+        }`;
 
       result.data.object = {
         upStatement: [{ sql: upQuery }],
@@ -2126,8 +2112,8 @@ class SqliteClient extends KnexClient {
       addNewColumnQuery += n.cdf
         ? ` DEFAULT ${this.genValue(n.cdf)}`
         : !n.rqd
-        ? ' '
-        : ` DEFAULT ''`;
+          ? ' '
+          : ` DEFAULT ''`;
       addNewColumnQuery += n.rqd ? ` NOT NULL` : ' ';
       query += n.unique ? ` UNIQUE` : '';
       addNewColumnQuery = this.genQuery(
@@ -2172,8 +2158,8 @@ class SqliteClient extends KnexClient {
       query += n.cdf
         ? ` DEFAULT ${this.genValue(n.cdf)}`
         : !n.rqd
-        ? ' '
-        : ` DEFAULT ''`;
+          ? ' '
+          : ` DEFAULT ''`;
       query += n.rqd ? ` NOT NULL` : ' ';
       // todo: unique constraint should be added using index
       // query += n.unique ? ` UNIQUE` : '';

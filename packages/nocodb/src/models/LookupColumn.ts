@@ -1,9 +1,14 @@
 import type { LookupType } from 'nocodb-sdk';
 import Column from '~/models/Column';
+import { Logger } from '@nestjs/common';
+
 import Noco from '~/Noco';
 import NocoCache from '~/cache/NocoCache';
 import { extractProps } from '~/helpers/extractProps';
 import { CacheGetType, CacheScope, MetaTable } from '~/utils/globals';
+
+const logger = new Logger('LookupColumn');
+
 
 export default class LookupColumn implements LookupType {
   fk_relation_column_id: string;
@@ -56,6 +61,8 @@ export default class LookupColumn implements LookupType {
   }
 
   public static async read(columnId: string, ncMeta = Noco.ncMeta) {
+    logger.log("reading from cache:" + columnId)
+
     let colData =
       columnId &&
       (await NocoCache.get(
@@ -63,6 +70,8 @@ export default class LookupColumn implements LookupType {
         CacheGetType.TYPE_OBJECT,
       ));
     if (!colData) {
+      logger.log("cachemiss:" + columnId)
+
       colData = await ncMeta.metaGet2(
         null, //,
         null, //model.db_alias,

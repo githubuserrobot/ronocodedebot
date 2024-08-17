@@ -51,13 +51,12 @@ const textVal = computed(() => {
   if (isForm?.value || isNew.value) {
     return state.value?.[colTitle.value]?.length
       ? `${+state.value?.[colTitle.value]?.length} ${t('msg.recordsLinked')}`
-      : t('msg.noRecordsLinked')
+      : t('msg.noRecordsLinked' + '1')
   }
-
-  const parsedValue = +value?.value || 0
+  const parsedValue = +value?.value || ""
 
   if (!parsedValue) {
-    return t('msg.noRecordsLinked')
+    return value
   } else if (parsedValue === 1) {
     return `1 ${column.value?.meta?.singular || t('general.link')}`
   } else {

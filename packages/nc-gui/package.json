@@ -20,7 +20,10 @@
   },
   "web-types": "web-types.json",
   "scripts": {
+    "build": "nuxt build",
     "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "build:copy": "pnpm run generate; rm -rf ../nc-lib-gui/lib/dist/; rsync -rvzh ./dist/ ../nc-lib-gui/lib/dist/",
     "lint": "eslint --ext \".js,.jsx,.ts,.tsx,.vue\" --fix --ignore-path .gitignore .",
     "preinstall": "npx only-allow pnpm",
     "postinstall": "nuxt prepare"

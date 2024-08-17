@@ -95,6 +95,7 @@
     "nocodb-sdk": "workspace:^",
     "papaparse": "^5.5.2",
     "parse-github-url": "^1.0.3",
+    "nc-lib-gui": "file:../nc-lib-gui",
     "pdfobject": "^2.3.0",
     "pdfobject-vue": "^0.0.4",
     "pinia": "^2.3.1",

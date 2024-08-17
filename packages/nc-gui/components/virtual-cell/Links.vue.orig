@@ -65,9 +65,15 @@ const textVal = computed(() => {
   if (isForm.value || isNew.value) {
     return state.value?.[colTitle.value]?.length
       ? `${+state.value?.[colTitle.value]?.length} ${t('msg.recordsLinked')}`
+<<<<<<< HEAD
       : isForm.value && !isExpandedFormOpen.value
       ? t('title.linkRecords')
-      : t('msg.noRecordsLinked' + 1)
+      : t('msg.noRecordsLinked')
+||||||| parent of b44c2b863f (Show a few values for many to many and optimize how we retreive them)
+      : t('msg.noRecordsLinked')
+=======
+      : t('msg.noRecordsLinked' + '1')
+>>>>>>> b44c2b863f (Show a few values for many to many and optimize how we retreive them)
   }
   const parsedValue = +value?.value || ""
 

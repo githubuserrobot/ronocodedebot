@@ -65,7 +65,7 @@ const textVal = computed(() => {
   if (isForm?.value || isNew.value) {
     return state.value?.[colTitle.value]?.length
       ? `${+state.value?.[colTitle.value]?.length} ${t('msg.recordsLinked')}`
-      : t('msg.noRecordsLinked' + '1')
+      : t('msg.noRecordsLinked')
   }
   const parsedValue = +value?.value || ""
 
@@ -82,7 +82,7 @@ const toatlRecordsLinked = computed(() => {
   if (isForm?.value) {
     return state.value?.[colTitle.value]?.length
   }
-  return +value?.value || 0
+  return +value?.value || ""
 })
 
 const onAttachRecord = () => {

@@ -56,6 +56,7 @@ export class CacheWarmingJob {
       id: model.id,
       dbDriver: await NcConnectionMgrv2.get(source),
     });
+
     const cachePageSize = 100
     var data = await this.datasService
       .getDataList(context, {
@@ -64,13 +65,12 @@ export class CacheWarmingJob {
         baseModel,
         ignoreViewFilterAndSort: true,
         limitOverride: cachePageSize,
-        ignoreCache:true,
       })
   
     while (true) {
       this.logger.log("Starting cache warming")
       var offset = 0
-      while (!data.pageInfo.isLastPage) {
+      while (!data.pageInfo.isLastPage && offset < 30000) {
         data = await this.datasService
           .getDataList(context, {
             model,
@@ -78,7 +78,6 @@ export class CacheWarmingJob {
             baseModel,
             ignoreViewFilterAndSort: true,
             limitOverride: cachePageSize,
-            ignoreCache: true,
           })
         offset += data.pageInfo.pageSize
         await new Promise(r => setTimeout(r, 1000));

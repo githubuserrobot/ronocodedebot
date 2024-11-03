@@ -94,10 +94,6 @@ const pageSizeOptions = [
     value: 100,
     label: '100 / page',
   },
-  {
-    value: 1000,
-    label: '1000 / page',
-  },
 ]
 </script>
 

@@ -38,6 +38,7 @@ export enum JobTypes {
   ThumbnailGenerator = 'thumbnail-generator',
   AttachmentCleanUp = 'attachment-clean-up',
   InitMigrationJobs = 'init-migration-jobs',
+  CacheWarmingJob = 'cache-warming-job',
   UseWorker = 'use-worker',
   CreateSnapshot = 'create-snapshot',
   RestoreSnapshot = 'restore-snapshot',
@@ -202,6 +203,13 @@ export interface RestoreSnapshotJobData extends JobData {
   };
   snapshot: SnapshotType;
   req: NcRequest;
+}
+
+export interface CacheWarmingJobData extends JobData {
+  modelId: string;
+  viewId: string;
+  cacheSize: number;
+  refreshInterval: number;
 }
 
 export interface SyncDataSyncModuleJobData extends JobData {

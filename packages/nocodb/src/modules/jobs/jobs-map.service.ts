@@ -9,6 +9,7 @@ import { DataExportProcessor } from '~/modules/jobs/jobs/data-export/data-export
 import { ThumbnailGeneratorProcessor } from '~/modules/jobs/jobs/thumbnail-generator/thumbnail-generator.processor';
 import { AttachmentCleanUpProcessor } from '~/modules/jobs/jobs/attachment-clean-up/attachment-clean-up';
 import { InitMigrationJobs } from '~/modules/jobs/migration-jobs/init-migration-jobs';
+import { CacheWarmingJob } from 'src/modules/jobs/jobs/cache-warming-job/cache-warming-job';
 import { UseWorkerProcessor } from '~/modules/jobs/jobs/use-worker/use-worker.processor';
 import { JobTypes } from '~/interface/Jobs';
 
@@ -25,6 +26,7 @@ export class JobsMap {
     protected readonly thumbnailGeneratorProcessor: ThumbnailGeneratorProcessor,
     protected readonly attachmentCleanUpProcessor: AttachmentCleanUpProcessor,
     protected readonly initMigrationJobs: InitMigrationJobs,
+    protected readonly cacheWarmingJob: CacheWarmingJob,
     protected readonly useWorkerProcessor: UseWorkerProcessor,
   ) {}
 
@@ -73,6 +75,9 @@ export class JobsMap {
       },
       [JobTypes.InitMigrationJobs]: {
         this: this.initMigrationJobs,
+      },
+      [JobTypes.CacheWarmingJob]: {
+        this: this.cacheWarmingJob,
       },
       [JobTypes.UseWorker]: {
         this: this.useWorkerProcessor,

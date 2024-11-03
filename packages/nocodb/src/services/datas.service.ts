@@ -248,6 +248,7 @@ export class DatasService {
       skipSortBasedOnOrderCol?: boolean;
       /** Serve the system order column (client caches sort live inserts by it). */
       extractOrderColumn?: boolean;
+      ignoreCache?: boolean;
     },
   ) {
     const {
@@ -303,19 +304,13 @@ export class DatasService {
         try {
           data = await nocoExecute(
             ast,
-            await baseModel.list(
-              { ...listArgs, apiVersion: param.apiVersion },
-              {
-                ignoreViewFilterAndSort,
-                throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-                ignorePagination: param.ignorePagination,
-                limitOverride: param.limitOverride,
-                skipSubstitutingColumnIds:
-                  context.api_version === NcApiVersion.V3 &&
-                  query?.[QUERY_STRING_FIELD_ID_ON_RESULT] === 'true',
-                skipSortBasedOnOrderCol,
-              },
-            ),
+            await baseModel.list(listArgs, {
+              ignoreViewFilterAndSort,
+              throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+              ignorePagination: param.ignorePagination,
+              limitOverride: param.limitOverride,
+              ignoreCache: param.ignoreCache,
+            }),
             {},
             listArgs,
           );

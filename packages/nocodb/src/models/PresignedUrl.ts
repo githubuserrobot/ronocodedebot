@@ -142,7 +142,6 @@ export default class PresignedUrl {
     );
 
     let tempUrl;
-
     const pathParameters: {
       [key: string]: string;
     } = {

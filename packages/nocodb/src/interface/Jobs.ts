@@ -76,6 +76,7 @@ export enum JobTypes {
   ChatMessage = 'chat-message',
   ChatApproval = 'chat-approval',
   BaseTrashCleanUp = 'base-trash-clean-up',
+  CacheWarmingJob = 'cache-warming-job',
   DataImport = 'data-import',
 }
 
@@ -101,6 +102,7 @@ export const SKIP_STORING_JOB_META = [
   JobTypes.WorkflowDraftReminder,
   JobTypes.ChatMessage,
   JobTypes.ChatApproval,
+  JobTypes.CacheWarmingJob,
 ];
 
 export enum JobStatus {
@@ -352,3 +354,5 @@ export interface DataImportJobData extends JobData {
   options: FileImportOptions;
   req: NcRequest;
 }
+
+export interface CacheWarmingJobData extends JobData {}

@@ -24,6 +24,8 @@ export class JobsService implements OnModuleInit {
 
   // pause primary instance queue
   async onModuleInit() {
+    this.logger.log("wtf")
+
     if (process.env.NC_WORKER_CONTAINER === 'false') {
       await this.jobsQueue.pause(true);
     }

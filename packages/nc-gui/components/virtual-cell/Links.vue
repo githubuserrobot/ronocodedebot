@@ -69,10 +69,11 @@ const textVal = computed(() => {
       ? t('title.linkRecords')
       : t('msg.noRecordsLinked' + 1)
   }
-  const parsedValue = +value?.value || ""
+
+  const parsedValue = +value?.value || 0
 
   if (!parsedValue) {
-    return value
+    return t('msg.noRecordsLinked')
   } else if (parsedValue === 1) {
     return `1 ${column.value?.meta?.singular || t('general.link')}`
   } else {

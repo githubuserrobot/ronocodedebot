@@ -442,7 +442,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       qb,
       fieldsSet: args.fieldsSet,
       viewId: this.viewId,
-      extractPkAndPv: true,
       validateFormula,
       columns,
     });
@@ -592,98 +591,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         validateFormula: true,
       });
     }
-    if (!ignorePagination) {
-      var futures = []
-      for (const col of columns) {
-        if (col.uidt != UITypes.Links && col.uidt != UITypes.Rollup) {
-          continue
-        }
-        futures.push(
-          (async () => {
-            var timerName = 'retrieve' + col.title
-            console.time(timerName);
-            const columnOptions = await col.getColOptions(this.context)
-            if (columnOptions.type != RelationTypes.MANY_TO_MANY) {
-              return null
-            }
-            console.timeLog(timerName, "colOptions")
-            const relationColumn = await columnOptions.getRelationColumn();
-            const chilCol = await (
-              (await relationColumn.getColOptions()) as LinkToAnotherRecordColumn
-            ).getChildColumn(this.context);
-            console.timeLog(timerName, "childCol")
 
-
-            const childTable = await chilCol.getModel(this.context);
-            const parentCol = await (
-              (await relationColumn.getColOptions()) as LinkToAnotherRecordColumn
-            ).getParentColumn(this.context);
-            console.timeLog(timerName, "parentCol")
-
-
-            const parentTable = await parentCol.getModel(this.context)
-            await parentTable.getColumns(this.context)
-            await childTable.getColumns(this.context)
-            console.timeLog(timerName, "GetCols")
-
-            var toBeExpanded = []
-            for (const dataIndex in data) {
-              const row = data[dataIndex]
-              if (row[col.title] == "0" || Number(row[col.title]) > 5) {
-                continue
-              }
-              if (row['Id'] == null) {
-                logger.log("bad row", JSON.stringify(row))
-              }
-              toBeExpanded.push({ "dataIndex": dataIndex, "rowId": row['Id'] })
-            }
-            if (toBeExpanded.length == 0) {
-              return null
-            }
-            console.timeLog(timerName, "toBeExpanded")
-
-            //var mmListed = await Promise.all(toBeExpanded.map(item => this.mmList({ parentId: item["rowId"], colId: col.id })))
-            logger.log("displayValues", parentTable.displayValue.title, childTable.displayValue.title)
-
-            var mmListed = await this.multipleMmList2({
-              colId: col.id,
-              parentIds: toBeExpanded.map(item => item["rowId"]),
-              columnName: parentTable.displayValue.column_name,
-              limit: 5
-            });
-
-            console.timeLog(timerName, "multipleMmList")
-
-            var newData = []
-            for (const i in toBeExpanded) {
-              var index = toBeExpanded[i]["dataIndex"]
-              var nested = []
-              var listed = mmListed[i]
-              for (const item of listed) {
-                var val = item[parentTable.displayValue.column_name]
-                if (val == null || val == "") {
-                  val = ""
-                }
-                nested.push(val)
-              }
-              newData.push({ dataIndex: index, nested: nested.join(",") })
-            }
-            console.timeLog(timerName, "dataCopy")
-            console.timeEnd(timerName);
-            return { colTitle: col.title, data: newData }
-          })())
-      }
-      var cols = await Promise.all(futures)
-      for (var i = 0; i < cols.length; i++) {
-        if (cols[i] == null) {
-          continue
-        }
-        var col = cols[i]
-        for (var j = 0; j < col.data.length; j++) {
-          data[col.data[j].dataIndex][col.colTitle] = col.data[j].nested
-        }
-      }
-    }
     return data?.map((d) => {
       d.__proto__ = proto;
       return d;
@@ -1664,85 +1572,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-
-  public async multipleMmList2(
-    {
-      colId,
-      parentIds: _parentIds,
-      columnName,
-      limit,
-    }: {
-      colId: string;
-      parentIds: any[];
-      columnName: string;
-      limit: number
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    console.time("colId " + colId)
-    // skip duplicate id
-    const parentIds = [...new Set(_parentIds)];
-    const { where, sort, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    console.timeLog("colId " + colId, "relcolumn")
-
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-    // const tn = this.model.tn;
-    // const cn = (await relColOptions.getChildColumn(this.context)).title;
-    const mmTable = await relColOptions.getMMModel(this.context);
-
-    // if mm table is not present then return
-    if (!mmTable) {
-      return;
-    }
-    console.timeLog("colId " + colId, "getMMModel", mmTable.table_name)
-
-    const vtn = this.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-
-    var finalQb = this.dbDriver().with("filteredM2m", function () {
-      this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
-    }).select(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`).from("filteredM2m").join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
-
-    const rtnId = childTable.id;
-
-    const children = await this.execAndParse(
-      finalQb,
-      await childTable.getColumns(this.context),
-    );
-    //logger.log("children", children)
-
-    const proto = await (
-      await Model.getBaseModelSQL(this.context, {
-        id: rtnId,
-        dbDriver: this.dbDriver,
-      })
-    ).getProto();
-    const gs = groupBy(
-      children.map((c) => {
-        c.__proto__ = proto;
-        return c;
-      }),
-      `${vcn}`,
-    );
-    return _parentIds.map((id) => gs[id] || []);
-  }
-
   public async multipleMmList(
     {
       colId,
@@ -2088,20 +1917,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                           colId: column.id,
                           ids,
                           apiVersion,
+                          columnName: column.title,
                         },
                         (listLoader as any).args,
                       );
-                      return ids.map((id: string) => {
-                        if (!data[id]) {
-                          return null
-                        }
-                        var listed = data[id]?.[0]
-                        if (listed["table2_id"].length == 0) {
-                          return listed
-                        }
-                        listed["table2_id"] = listed["table2_id"][0]
-                        return listed
-                      }
+                      return ids.map((id: string) =>
+                        data[id] ? data[id] : [],
                       );
                     } else {
                       return [
@@ -2366,21 +2187,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                           {
                             colId: column.id,
                             ids,
-                            columnName: column.title,
                           },
                           (listLoader as any).args,
                         );
-                        return ids.map((id: string) => {
-                          if (!data[id]) {
-                            return null
-                          }
-                          var listed = data[id]?.[0]
-                          if (listed["table2_id"].length == 0) {
-                            return listed
-                          }
-                          listed["table2_id"] = listed["table2_id"][0]
-                          return listed
-                        })
+                        return ids.map((id: string) =>
+                          data[id] ? data[id]?.[0] : null,
+                        );
                       } else {
                         return [
                           (

@@ -2324,6 +2324,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       ?.count;
   }
 
+<<<<<<< HEAD
   // #region relation list count part 1
     // #region relation list count part 1
     async multipleHmList(
@@ -2347,6 +2348,94 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       colId: string; ids: any[],
       columnName: string
     },
+||||||| parent of 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
+  async multipleHmList(
+    { colId, ids: _ids,
+      columnName, }: {
+        colId: string; ids: any[],
+        columnName: string
+      },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    logger.log("multipleHmList")
+    try {
+      // skip duplicate id
+      const ids = [...new Set(_ids)];
+
+      const { where, sort, ...rest } = this._getListArgs(args as any);
+      // todo: get only required fields
+      const relColumn = (await this.model.getColumns(this.context)).find(
+        (c) => c.id === colId,
+      );
+
+      const chilCol = await (
+        (await relColumn.getColOptions(
+          this.context,
+        )) as LinkToAnotherRecordColumn
+      ).getChildColumn(this.context);
+      const childTable = await chilCol.getModel(this.context);
+      const parentCol = await (
+        (await relColumn.getColOptions(
+          this.context,
+        )) as LinkToAnotherRecordColumn
+      ).getParentColumn(this.context);
+      const parentTable = await parentCol.getModel(this.context);
+      const childModel = await Model.getBaseModelSQL(this.context, {
+        model: childTable,
+        dbDriver: this.dbDriver,
+      });
+      await parentTable.getColumns(this.context);
+
+      const childTn = this.getTnPath(childTable);
+      const parentTn = this.getTnPath(parentTable);
+
+      const qb = this.dbDriver(childTn);
+      await childModel.selectObject({
+        qb,
+        extractPkAndPv: true,
+        fieldsSet: args.fieldsSet,
+      });
+      await this.applySortAndFilter({ table: childTable, where, qb, sort });
+
+      var childQb = this.dbDriver.queryBuilder().from(`${childTn}`)
+        .select(
+          this.dbDriver.raw(`${childTn}.${chilCol.column_name} as ${GROUP_COL}`),
+          `${childTn}.${chilCol.column_name}`,
+          this.dbDriver.raw(`ARRAY_AGG(${childTn}.table2_id) as table2_id`))
+        .groupBy(`${childTn}.${chilCol.column_name}`)
+
+      const children = await this.execAndParse(
+        childQb,
+        await childTable.getColumns(this.context),
+      );
+      const proto = await (
+        await Model.getBaseModelSQL(this.context, {
+          id: childTable.id,
+          dbDriver: this.dbDriver,
+        })
+      ).getProto();
+
+      return groupBy(
+        children.map((c) => {
+          c.__proto__ = proto;
+          return c;
+        }),
+        GROUP_COL,
+      );
+    } catch (e) {
+      logger.error(e);
+    }
+  }
+
+  async multipleHmListOld(
+    { colId, ids: _ids, columnName }: {
+      colId: string; ids: any[],
+      columnName: string
+    },
+=======
+  async multipleHmList(
+    { colId, ids: _ids }: { colId: string; ids: any[] },
+>>>>>>> 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
     try {
@@ -3044,8 +3133,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                         {
                           colId: column.id,
                           ids,
+<<<<<<< HEAD
                           apiVersion,
+||||||| parent of 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
                           columnName: column.title,
+=======
+>>>>>>> 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
                         },
                         (listLoader as any).args,
                       );

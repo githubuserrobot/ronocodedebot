@@ -25,6 +25,7 @@ export enum JobTypes {
   ThumbnailGenerator = 'thumbnail-generator',
   AttachmentCleanUp = 'attachment-clean-up',
   InitMigrationJobs = 'init-migration-jobs',
+  CacheWarmingJob = 'cache-warming-job'
 }
 
 export enum JobStatus {
@@ -147,4 +148,11 @@ export interface DataExportJobData extends JobData {
 
 export interface ThumbnailGeneratorJobData extends JobData {
   attachments: AttachmentResType[];
+}
+
+export interface CacheWarmingJobData extends JobData {
+  modelId: string;
+  viewId: string;
+  cacheSize: number;
+  refreshInterval: number;
 }

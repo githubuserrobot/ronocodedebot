@@ -810,6 +810,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipSortBasedOnOrderCol?: boolean;
       ignoreRls?: boolean;
       deletedOnly?: boolean;
+      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {

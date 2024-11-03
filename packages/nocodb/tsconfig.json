@@ -1,4 +1,9 @@
 {
+  "ts-node": {
+    "require": [
+      "tsconfig-paths/register"
+    ]
+  },
   "compilerOptions": {
     /* module/moduleResolution are set for type checking only (IDE + tsc --noEmit).
        Actual compilation is handled by SWC via rspack, which ignores these settings.

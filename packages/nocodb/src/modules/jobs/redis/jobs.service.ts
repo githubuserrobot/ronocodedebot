@@ -51,7 +51,6 @@ export class JobsService implements OnModuleInit {
       this.logger.log('Pausing local queue');
       await this.jobsQueue.pause(true);
     };
-
     await this.add(JobTypes.InitMigrationJobs, {});
   }
 

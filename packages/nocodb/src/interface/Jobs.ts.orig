@@ -232,6 +232,7 @@ export interface RestoreSnapshotJobData extends JobData {
   req: NcRequest;
 }
 
+<<<<<<< HEAD
 export interface SyncDataSyncModuleJobData extends JobData {
   syncConfigId: string;
   targetTables?: string[];
@@ -249,10 +250,12 @@ export interface ExecuteActionJobData extends JobData {
   viewId?: string;
   scriptId: string;
 }
-
+||||||| parent of 77aee45520 (Create preawarming cache job)
+=======
 export interface CacheWarmingJobData extends JobData {
   modelId: string;
   viewId: string;
   cacheSize: number;
   refreshInterval: number;
 }
+>>>>>>> 77aee45520 (Create preawarming cache job)

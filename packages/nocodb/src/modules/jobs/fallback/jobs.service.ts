@@ -11,6 +11,7 @@ export class JobsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.add(JobTypes.InitMigrationJobs, {});
+    await this.add(JobTypes.CacheWarmingJob, {});
   }
 
   async add(

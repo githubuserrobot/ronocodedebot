@@ -53,10 +53,11 @@ const textVal = computed(() => {
       ? `${+state.value?.[colTitle.value]?.length} ${t('msg.recordsLinked')}`
       : t('msg.noRecordsLinked')
   }
-  const parsedValue = +value?.value || ""
+
+  const parsedValue = +value?.value || 0
 
   if (!parsedValue) {
-    return value
+    return t('msg.noRecordsLinked')
   } else if (parsedValue === 1) {
     return `1 ${column.value?.meta?.singular || t('general.link')}`
   } else {

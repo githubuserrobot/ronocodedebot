@@ -184,7 +184,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     autoBind(this);
   }
 
-  @trace()
   public async readByPk(
     id?: any,
     validateFormula = false,
@@ -255,7 +254,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       : null;
   }
 
-  @trace()
   public async readByPkFromModel(
     model = this.model,
     viewId?: string,
@@ -285,7 +283,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
-  @trace()
   public async readOnlyPrimariesByPkFromModel(
     props: { model: Model; id: any; extractDisplayValueData?: boolean }[],
   ): Promise<any[]> {
@@ -308,7 +305,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
   public async exist(id?: any): Promise<any> {
     const qb = this.dbDriver(this.tnPath);
     await this.model.getColumns(this.context);
@@ -326,7 +322,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: add support for sortArrJson
-  @trace()
   public async findOne(
     args: {
       where?: string;
@@ -396,7 +391,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
-  @trace()
   public async list(
     args: {
       where?: string;
@@ -417,7 +411,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       validateFormula?: boolean;
       throwErrorIfInvalidParams?: boolean;
       limitOverride?: number;
-      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {
@@ -568,12 +561,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         applyPaginate(qb, { ...rest, limit: limitOverride });
       }
     }
-    const proto = await this.getProto({ignoreCache: options.ignoreCache ?? false});
+    const proto = await this.getProto();
 
     let data;
     try {
       data = await this.execAndParse(qb, undefined, {
-        gnoreCache: options.ignoreCache ?? false,
         apiVersion: args.apiVersion,
       });
     } catch (e) {
@@ -592,7 +584,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
   }
 
-  @trace()
   public async count(
     args: {
       where?: string;
@@ -2333,6 +2324,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       ?.count;
   }
 
+<<<<<<< HEAD
   // #region relation list count part 1
     // #region relation list count part 1
     async multipleHmList(
@@ -2356,6 +2348,94 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       colId: string; ids: any[],
       columnName: string
     },
+||||||| parent of 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
+  async multipleHmList(
+    { colId, ids: _ids,
+      columnName, }: {
+        colId: string; ids: any[],
+        columnName: string
+      },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    logger.log("multipleHmList")
+    try {
+      // skip duplicate id
+      const ids = [...new Set(_ids)];
+
+      const { where, sort, ...rest } = this._getListArgs(args as any);
+      // todo: get only required fields
+      const relColumn = (await this.model.getColumns(this.context)).find(
+        (c) => c.id === colId,
+      );
+
+      const chilCol = await (
+        (await relColumn.getColOptions(
+          this.context,
+        )) as LinkToAnotherRecordColumn
+      ).getChildColumn(this.context);
+      const childTable = await chilCol.getModel(this.context);
+      const parentCol = await (
+        (await relColumn.getColOptions(
+          this.context,
+        )) as LinkToAnotherRecordColumn
+      ).getParentColumn(this.context);
+      const parentTable = await parentCol.getModel(this.context);
+      const childModel = await Model.getBaseModelSQL(this.context, {
+        model: childTable,
+        dbDriver: this.dbDriver,
+      });
+      await parentTable.getColumns(this.context);
+
+      const childTn = this.getTnPath(childTable);
+      const parentTn = this.getTnPath(parentTable);
+
+      const qb = this.dbDriver(childTn);
+      await childModel.selectObject({
+        qb,
+        extractPkAndPv: true,
+        fieldsSet: args.fieldsSet,
+      });
+      await this.applySortAndFilter({ table: childTable, where, qb, sort });
+
+      var childQb = this.dbDriver.queryBuilder().from(`${childTn}`)
+        .select(
+          this.dbDriver.raw(`${childTn}.${chilCol.column_name} as ${GROUP_COL}`),
+          `${childTn}.${chilCol.column_name}`,
+          this.dbDriver.raw(`ARRAY_AGG(${childTn}.table2_id) as table2_id`))
+        .groupBy(`${childTn}.${chilCol.column_name}`)
+
+      const children = await this.execAndParse(
+        childQb,
+        await childTable.getColumns(this.context),
+      );
+      const proto = await (
+        await Model.getBaseModelSQL(this.context, {
+          id: childTable.id,
+          dbDriver: this.dbDriver,
+        })
+      ).getProto();
+
+      return groupBy(
+        children.map((c) => {
+          c.__proto__ = proto;
+          return c;
+        }),
+        GROUP_COL,
+      );
+    } catch (e) {
+      logger.error(e);
+    }
+  }
+
+  async multipleHmListOld(
+    { colId, ids: _ids, columnName }: {
+      colId: string; ids: any[],
+      columnName: string
+    },
+=======
+  async multipleHmList(
+    { colId, ids: _ids }: { colId: string; ids: any[] },
+>>>>>>> 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
     try {
@@ -2738,7 +2818,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
   public async mmList(
     param: {
       colId: string;
@@ -2785,102 +2864,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
-  public async multipleMmListFast(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      parentIds: any[];
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
-  ) {
-    // skip duplicate id
-    const parentIds = [...new Set(_parentIds)];
-    const { where, sort, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-    const mmTable = await relColOptions.getMMModel(this.context);
-
-    // if mm table is not present then return
-    if (!mmTable) {
-      return;
-    }
-
-    const vtn = this.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-
-    await parentTable.getColumns(this.context);
-    await childTable.getColumns(this.context)
-
-    const columnName = childTable.displayValue.column_name
-    const qb = this.dbDriver()
-
-    const childModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-    await childModel.selectObject({ qb, fieldsSet: args.fieldsSet });
-
-    await this.applySortAndFilter({
-      table: childTable,
-      where,
-      qb,
-      sort,
-    });
-
-    var finalQb = qb
-      .with("filteredM2m", function () {
-        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
-      })
-      .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${GROUP_COL}`)
-      .from("filteredM2m")
-      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
-
-    const rtnId = childTable.id;
-
-    const children = await this.execAndParse(
-      finalQb,
-      await childTable.getColumns(this.context),
-      {ignoreCache: args.ignoreCache ?? false},
-    );
-
-    const proto = await (
-      await Model.getBaseModelSQL(this.context, {
-        id: rtnId,
-        dbDriver: this.dbDriver,
-      })
-    ).getProto();
-    
-    const gs = groupBy(
-      children.map((c) => {
-        c.__proto__ = proto;
-        return c;
-      }),
-      GROUP_COL,
-    );
-    return _parentIds.map((id) => gs[id] || []);
-  }
-
-  @trace()
   public async multipleMmList(
     param: {
       colId: string;
@@ -2916,7 +2899,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   // #region relation list count part 2
   // todo: naming & optimizing
-  @trace()
   public async getMmChildrenExcludedListCount(
     { colId, pid = null },
     args,
@@ -2928,7 +2910,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getMmChildrenExcludedList(
     { colId, pid = null },
     args,
@@ -2940,7 +2921,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getHmChildrenExcludedList(
     { colId, pid = null },
     args,
@@ -2952,7 +2932,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getHmChildrenExcludedListCount(
     { colId, pid = null },
     args,
@@ -2964,7 +2943,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getExcludedOneToOneChildrenList(
     { colId, cid = null },
     args,
@@ -2976,7 +2954,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getBtChildrenExcludedListCount(
     { colId, cid = null },
     args,
@@ -2988,7 +2965,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async countExcludedOneToOneChildren(
     { colId, cid = null },
     args,
@@ -3000,7 +2976,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getBtChildrenExcludedList(
     { colId, cid = null },
     args,
@@ -3153,20 +3128,19 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               if (colOptions?.type === 'hm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
-                    var args = (listLoader as any).args
-                    if (options != null ){
-                      args["ignoreCache"] = options.ignoreCache ?? false
-                    }
-                    
                     if (ids.length > 1) {
                       const data = await this.multipleHmList(
                         {
                           colId: column.id,
                           ids,
+<<<<<<< HEAD
                           apiVersion,
+||||||| parent of 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
                           columnName: column.title,
+=======
+>>>>>>> 019b09a074 (Revert "Show a few values for many to many and optimize how we retreive them")
                         },
-                        args,
+                        (listLoader as any).args,
                       );
                       return ids.map((id: string) =>
                         data[id] ? data[id] : [],
@@ -3180,7 +3154,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                             apiVersion,
                             nested: true,
                           },
-                          args,
+                          (listLoader as any).args,
                         ),
                       ];
                     }
@@ -3204,20 +3178,17 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               } else if (colOptions.type === 'mm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
-                    var args = (listLoader as any).args ?? []
-                    if (options != null) {
-                      args["ignoreCache"] = options.ignoreCache ?? false
-                    }
                     if (ids?.length > 1) {
-                      const data = await this.multipleMmListFast(
+                      const data = await this.multipleMmList(
                         {
                           parentIds: ids,
                           colId: column.id,
                           apiVersion,
                           nested: true,
                         },
-                        args,
+                        (listLoader as any).args,
                       );
+
                       return data;
                     } else {
                       return [
@@ -3228,7 +3199,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                             apiVersion,
                             nested: true,
                           },
-                          args,
+                          (listLoader as any).args,
                         ),
                       ];
                     }
@@ -3432,16 +3403,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                   const listLoader = new DataLoader(
                     async (ids: string[]) => {
                       if (ids.length > 1) {
-                        var args = (listLoader as any).args ?? []
-                        if (options != null ){
-                          args["ignoreCache"] = options.ignoreCache ?? false
-                        }
                         const data = await this.multipleHmList(
                           {
                             colId: column.id,
                             ids,
                           },
-                          args,
+                          (listLoader as any).args,
                         );
                         return ids.map((id: string) =>
                           data[id] ? data[id]?.[0] : null,
@@ -3504,7 +3471,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
   }
 
-  @trace()
   public async shuffle({ qb }: { qb: Knex.QueryBuilder }): Promise<void> {
     if (this.isMySQL) {
       qb.orderByRaw('RAND()');
@@ -3518,7 +3484,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   // todo:
   //  pass view id as argument
   //  add option to get only pk and pv
-  @trace()
   public async selectObject({
     qb,
     columns: _columns,
@@ -4407,7 +4372,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return this.dbDriver.clientType();
   }
 
-  @trace()
   public async readRecord(params: {
     idOrRecord: string | Record<string, any>;
     fieldsSet?: Set<string>;
@@ -6322,7 +6286,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  @trace()
   public async afterBulkUpdate(
     prevData: any,
     newData: any,
@@ -6430,7 +6393,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     await this.handleRichTextMentions(prevData, newData, req);
   }
 
-  @trace()
   public async beforeUpdate(data: any, _trx: any, req): Promise<void> {
     const ignoreWebhook = req.query?.ignoreWebhook;
     if (ignoreWebhook) {
@@ -6443,7 +6405,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  @trace()
   public async afterUpdate(
     prevData: any,
     newData: any,
@@ -6525,7 +6486,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     await this.handleRichTextMentions(prevData, newData, req);
   }
 
-  @trace()
   public async beforeDelete(data: any, _trx: any, req): Promise<void> {
     if (this.model.synced) {
       NcError.badRequest('Cannot delete from synced table');
@@ -7273,7 +7233,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  @trace()
   public async groupedListCount(
     args: {
       groupColumnId: string;
@@ -7368,7 +7327,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return await this.execAndParse(qb);
   }
 
-  @trace()
   public async execAndGetRows(query: string, trx?: Knex | CustomKnex) {
     trx = trx || this.dbDriver;
 
@@ -7389,7 +7347,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  @trace()
   public async execAndParse(
     qb: Knex.QueryBuilder | string,
     dependencyColumns?: Column[],
@@ -7402,7 +7359,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       raw?: boolean; // alias for skipDateConversion and skipAttachmentConversion
       first?: boolean;
       bulkAggregate?: boolean;
-      ignoreCache?: boolean;
       apiVersion?: NcApiVersion;
     } = {
       skipDateConversion: false,
@@ -7413,7 +7369,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       raw: false,
       first: false,
       bulkAggregate: false,
-      ignoreCache: false,
       apiVersion: NcApiVersion.V2,
     },
   ) {
@@ -7439,7 +7394,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     // update attachment fields
     if (!options.skipAttachmentConversion) {
-      data = await this.convertAttachmentType(data, dependencyColumns, options.ignoreCache ?? false);
+      data = await this.convertAttachmentType(data, dependencyColumns);
     }
 
     // update date time fields
@@ -7715,13 +7670,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
-  @trace()
   protected async _convertAttachmentType(
     attachmentColumns: Record<string, any>[],
     d: Record<string, any>,
-    ignoreCache?: boolean,
   ) {
-    var ignoreCache = ignoreCache ?? false
     try {
       if (d) {
         const promises = [];
@@ -7768,17 +7720,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                       lookedUpAttachment.thumbnails,
                     )) {
                       promises.push(
-                        PresignedUrl.signAttachment(
-                          {
-                            attachment: {
-                              ...lookedUpAttachment,
-                              path: `${thumbnailPath}/${key}.jpg`,
-                            },
-                            filename: lookedUpAttachment.title,
-                            mimetype: 'image/jpeg',
-                            nestedKeys: ['thumbnails', key],
-                            ignoreCache: ignoreCache
-                          })
+                        PresignedUrl.signAttachment({
+                          attachment: {
+                            ...lookedUpAttachment,
+                            path: `${thumbnailPath}/${key}.jpg`,
+                          },
+                          filename: lookedUpAttachment.title,
+                          mimetype: 'image/jpeg',
+                          nestedKeys: ['thumbnails', key],
+                        }),
                       );
                     }
                   } else if (lookedUpAttachment?.url) {
@@ -7790,7 +7740,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                       PresignedUrl.signAttachment({
                         attachment: lookedUpAttachment,
                         filename: lookedUpAttachment.title,
-                        ignoreCache: ignoreCache
                       }),
                     );
 
@@ -7832,7 +7781,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                     PresignedUrl.signAttachment({
                       attachment,
                       filename: attachment.title,
-                      ignoreCache: ignoreCache
                     }),
                   );
 
@@ -7861,7 +7809,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                         filename: attachment.title,
                         mimetype: 'image/jpeg',
                         nestedKeys: ['thumbnails', key],
-                        ignoreCache: ignoreCache
                       }),
                     );
                   }
@@ -7874,7 +7821,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                     PresignedUrl.signAttachment({
                       attachment,
                       filename: attachment.title,
-                      ignoreCache: ignoreCache
                     }),
                   );
 
@@ -7899,7 +7845,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                         filename: attachment.title,
                         mimetype: 'image/jpeg',
                         nestedKeys: ['thumbnails', key],
-                        ignoreCache: ignoreCache
                       }),
                     );
                   }
@@ -7940,7 +7885,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
-  @trace()
   // this function is used to convert the response in string to array in API response
   protected async _convertMultiSelectType(
     multiSelectColumns: Record<string, any>[],
@@ -8019,7 +7963,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
-  @trace()
   public async convertMultiSelectTypes(
     data: Record<string, any>,
     dependencyColumns?: Column[],
@@ -8053,9 +7996,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   public async convertAttachmentType(
     data: Record<string, any>,
     dependencyColumns?: Column[],
-    ignoreCache?: boolean
   ) {
-    var ignoreCache = ignoreCache ?? false
     // attachment is stored in text and parse in UI
     // convertAttachmentType is used to convert the response in string to array of object in API response
     if (data) {
@@ -8074,13 +8015,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           }
         }
       }
+
       if (attachmentColumns.length) {
         if (Array.isArray(data)) {
           data = await Promise.all(
-            data.map((d) => this._convertAttachmentType(attachmentColumns, d, ignoreCache)),
+            data.map((d) => this._convertAttachmentType(attachmentColumns, d)),
           );
         } else {
-          data = await this._convertAttachmentType(attachmentColumns, data, ignoreCache);
+          data = await this._convertAttachmentType(attachmentColumns, data);
         }
       }
     }

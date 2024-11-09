@@ -2369,7 +2369,6 @@ class BaseModelSqlv2 {
         fieldsSet: args.fieldsSet,
       });
       await this.applySortAndFilter({ table: childTable, where, qb, sort });
-
       const childQb = this.dbDriver.queryBuilder().from(
         this.dbDriver
           .unionAll(
@@ -2691,6 +2690,99 @@ class BaseModelSqlv2 {
     } catch (e) {
       throw e;
     }
+  }
+
+  public async multipleMmListFast(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      parentIds: any[];
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    // skip duplicate id
+    const parentIds = [...new Set(_parentIds)];
+    const { where, sort, ...rest } = this._getListArgs(args as any);
+    const relColumn = (await this.model.getColumns(this.context)).find(
+      (c) => c.id === colId,
+    );
+
+    const relColOptions = (await relColumn.getColOptions(
+      this.context,
+    )) as LinkToAnotherRecordColumn;
+    const mmTable = await relColOptions.getMMModel(this.context);
+
+    // if mm table is not present then return
+    if (!mmTable) {
+      return;
+    }
+
+    const vtn = this.getTnPath(mmTable);
+    const vcn = (await relColOptions.getMMChildColumn(this.context))
+      .column_name;
+    const vrcn = (await relColOptions.getMMParentColumn(this.context))
+      .column_name;
+
+    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
+    const childTable = await (
+      await relColOptions.getParentColumn(this.context)
+    ).getModel(this.context);
+
+    const parentTable = await (
+      await relColOptions.getChildColumn(this.context)
+    ).getModel(this.context);
+
+    await parentTable.getColumns(this.context);
+    await childTable.getColumns(this.context)
+
+    const columnName = childTable.displayValue.column_name
+    const qb = this.dbDriver()
+
+    const childModel = await Model.getBaseModelSQL(this.context, {
+      dbDriver: this.dbDriver,
+      model: childTable,
+    });
+    await childModel.selectObject({ qb, fieldsSet: args.fieldsSet });
+
+    await this.applySortAndFilter({
+      table: childTable,
+      where,
+      qb,
+      sort,
+    });
+
+    var finalQb = qb
+      .with("filteredM2m", function () {
+        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
+      })
+      .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${GROUP_COL}`)
+      .from("filteredM2m")
+      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
+
+    const rtnId = childTable.id;
+
+    const children = await this.execAndParse(
+      finalQb,
+      await childTable.getColumns(this.context),
+    );
+
+    const proto = await (
+      await Model.getBaseModelSQL(this.context, {
+        id: rtnId,
+        dbDriver: this.dbDriver,
+      })
+    ).getProto();
+    
+    const gs = groupBy(
+      children.map((c) => {
+        c.__proto__ = proto;
+        return c;
+      }),
+      GROUP_COL,
+    );
+    return _parentIds.map((id) => gs[id] || []);
   }
 
   public async multipleMmList(
@@ -3806,14 +3898,13 @@ class BaseModelSqlv2 {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
                     if (ids?.length > 1) {
-                      const data = await this.multipleMmList(
+                      const data = await this.multipleMmListFast(
                         {
                           parentIds: ids,
                           colId: column.id,
                         },
                         (listLoader as any).args,
                       );
-
                       return data;
                     } else {
                       return [

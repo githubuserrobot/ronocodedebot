@@ -148,8 +148,7 @@ export default async function ({
         ]),
       ).where(
         knex.ref(
-          `${alias || parentBaseModel.getTnPath(parentModel.table_name)}.${
-            parentCol.column_name
+          `${alias || parentBaseModel.getTnPath(parentModel.table_name)}.${parentCol.column_name
           }`,
         ),
         '=',
@@ -170,8 +169,7 @@ export default async function ({
         ]),
       ).where(
         knex.ref(
-          `${alias || parentBaseModel.getTnPath(parentModel.table_name)}.${
-            parentCol.column_name
+          `${alias || parentBaseModel.getTnPath(parentModel.table_name)}.${parentCol.column_name
           }`,
         ),
         '=',
@@ -185,9 +183,20 @@ export default async function ({
     }
 
     case RelationTypes.MANY_TO_MANY: {
+      if (columnOptions instanceof LinksColumn) {
+        try {
+          const qb = knex("nc_tdo8___Obstructions").select(1).first()
+          return {
+            builder: qb,
+          };
+        } catch (error) {
+          console.trace(error)
+          throw error
+        }
+      }
+
       const mmModel = await relationColumnOption.getMMModel(context);
       const mmChildCol = await relationColumnOption.getMMChildColumn(context);
-      const mmParentCol = await relationColumnOption.getMMParentColumn(context);
       const assocBaseModel = await Model.getBaseModelSQL(context, {
         id: mmModel.id,
         dbDriver: knex,
@@ -197,33 +206,37 @@ export default async function ({
           NcDataErrorCodes.NC_ERR_MM_MODEL_NOT_FOUND,
         ]);
       }
-
-      const qb = knex(
-        knex.raw(`?? as ??`, [
-          parentBaseModel.getTnPath(parentModel?.table_name),
-          refTableAlias,
-        ]),
-      )
+      const prejoined = "prejoined"
+      const qb = knex(refTableAlias
+      ).select("total").withMaterialized(refTableAlias, knex(knex.raw(`?? as ??`, [
+        parentBaseModel.getTnPath(parentModel?.table_name),
+        prejoined,
+      ]))
+        .select(knex.ref(
+          `${assocBaseModel.getTnPath(mmModel.table_name)}.${mmChildCol.column_name
+          }`,
+        ))
+        [columnOptions.rollup_function as string](`${prejoined}.${childCol.column_name} as total`)
         .innerJoin(
           assocBaseModel.getTnPath(mmModel.table_name) as any,
           knex.ref(
-            `${assocBaseModel.getTnPath(mmModel.table_name)}.${
-              mmParentCol.column_name
+            `${assocBaseModel.getTnPath(mmModel.table_name)}.${mmChildCol.column_name
             }`,
           ) as any,
           '=',
-          knex.ref(`${refTableAlias}.${parentCol.column_name}`) as any,
-        )
+          knex.ref(`${prejoined}.${parentCol.column_name}`) as any,
+        ).groupBy(knex.ref(
+          `${assocBaseModel.getTnPath(mmModel.table_name)}.${mmChildCol.column_name
+          }`,
+        )))
         .where(
           knex.ref(
-            `${assocBaseModel.getTnPath(mmModel.table_name)}.${
-              mmChildCol.column_name
+            `${refTableAlias}.${mmChildCol.column_name
             }`,
           ),
           '=',
           knex.ref(
-            `${alias || childBaseModel.getTnPath(childModel.table_name)}.${
-              childCol.column_name
+            `${alias || childBaseModel.getTnPath(childModel.table_name)}.${childCol.column_name
             }`,
           ),
         );

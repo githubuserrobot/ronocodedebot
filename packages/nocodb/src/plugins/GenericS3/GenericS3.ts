@@ -171,7 +171,7 @@ export default class GenericS3 implements IStorageAdapterV2 {
 
   public async getSignedUrl(
     key,
-    expiresInSeconds = 48 * 60 * 60,
+    expiresInSeconds = 7200,
     pathParameters?: { [key: string]: string },
   ) {
     try {

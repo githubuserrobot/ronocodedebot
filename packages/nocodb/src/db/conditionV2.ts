@@ -26,6 +26,7 @@ import Filter from '~/models/Filter';
 import { getAliasGenerator } from '~/utils';
 import { validateAndStringifyJson } from '~/utils/tsUtils';
 import { getColumnName } from '~/helpers/dbHelpers';
+import { trace } from '~/tracing/decorator'
 
 // tod: tobe fixed
 // extend(customParseFormat);

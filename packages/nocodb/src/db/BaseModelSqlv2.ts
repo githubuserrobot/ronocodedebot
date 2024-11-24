@@ -130,6 +130,8 @@ import {
 } from '~/utils';
 import { MetaTable } from '~/utils/globals';
 import { chunkArray } from '~/utils/tsUtils';
+import { trace } from '~/tracing/decorator'
+
 
 dayjs.extend(utc);
 
@@ -2445,6 +2447,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async mmList(
     { colId, parentId },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
@@ -2720,71 +2723,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      ids: any[];
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
-      param,
-      args,
-    );
-  }
-
-  @trace()
-  public async mmList(
-    param: {
-      colId: string;
-      parentId: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-    selectAllRecords = false,
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).mmList(
-      param,
-      args,
-      selectAllRecords,
-    );
-  }
-
-  async multipleHmListCount({ colId, ids }) {
-    return relationDataFetcher({
-      baseModel: this,
-      logger,
-    }).multipleHmListCount({
-      colId,
-      ids,
-    });
-  }
-
-  async hmList(
-    param: {
-      colId: string;
-      id: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
-  }
-
-  async hmListCount({ colId, id }, args) {
-    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
-      { colId, id },
-      args,
-    );
-  }
-
   @trace()
   public async multipleMmListFast(
     {
@@ -2881,6 +2819,138 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   @trace()
+<<<<<<< HEAD
+||||||| parent of 38aef67bd0 (Add traces for list calls)
+  public async multipleMmList(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
+  }
+
+  public async mmList(
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    selectAllRecords = false,
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
+    );
+  }
+
+  async multipleHmListCount({ colId, ids }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
+  }
+
+  async hmList(
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
+  }
+
+  async hmListCount({ colId, id }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
+  }
+
+=======
+  public async multipleMmList(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
+  }
+
+  public async mmList(
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    selectAllRecords = false,
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
+    );
+  }
+
+  async multipleHmListCount({ colId, ids }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
+  }
+
+  async hmList(
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
+  }
+
+  async hmListCount({ colId, id }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
+  }
+
+>>>>>>> 38aef67bd0 (Add traces for list calls)
   public async multipleMmList(
     param: {
       colId: string;
@@ -7083,6 +7153,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  @trace()
   public async groupedList(
     args: {
       groupColumnId: string;

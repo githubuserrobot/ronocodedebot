@@ -27,10 +27,10 @@ import generateLookupSelectQuery from '~/db/generateLookupSelectQuery';
 import { getAliasGenerator } from '~/utils';
 import { getRefColumnIfAlias } from '~/helpers';
 import { type BarcodeColumn, BaseUser, type QrCodeColumn } from '~/models';
+import { trace } from '~/tracing/decorator'
 
 // tod: tobe fixed
 // extend(customParseFormat);
-
 export default async function conditionV2(
   baseModelSqlv2: BaseModelSqlv2,
   conditionObj: Filter | FilterType | FilterType[] | Filter[],

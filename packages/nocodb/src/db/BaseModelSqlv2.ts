@@ -76,6 +76,7 @@ import { extractProps } from '~/helpers/extractProps';
 import { defaultLimitConfig } from '~/helpers/extractLimitAndOffset';
 import generateLookupSelectQuery from '~/db/generateLookupSelectQuery';
 import applyAggregation from '~/db/aggregation';
+import { trace } from '~/tracing/decorator'
 import { chunkArray } from '~/utils/tsUtils';
 
 dayjs.extend(utc);
@@ -249,6 +250,7 @@ class BaseModelSqlv2 {
     autoBind(this);
   }
 
+  @trace()
   public async readByPk(
     id?: any,
     validateFormula = false,
@@ -313,6 +315,7 @@ class BaseModelSqlv2 {
     return data ? await nocoExecute(ast, data, {}, parsedQuery) : null;
   }
 
+  @trace()
   public async readByPkFromModel(
     model = this.model,
     viewId?: string,
@@ -339,6 +342,7 @@ class BaseModelSqlv2 {
     return data;
   }
 
+  @trace()
   public async readOnlyPrimariesByPkFromModel(
     props: { model: Model; id: any; extractDisplayValueData?: boolean }[],
   ): Promise<any[]> {
@@ -361,6 +365,7 @@ class BaseModelSqlv2 {
     );
   }
 
+  @trace()
   public async exist(id?: any): Promise<any> {
     const qb = this.dbDriver(this.tnPath);
     await this.model.getColumns(this.context);
@@ -378,6 +383,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: add support for sortArrJson
+  @trace()
   public async findOne(
     args: {
       where?: string;
@@ -438,6 +444,7 @@ class BaseModelSqlv2 {
     return data;
   }
 
+  @trace()
   public async list(
     args: {
       where?: string;
@@ -623,6 +630,7 @@ class BaseModelSqlv2 {
     });
   }
 
+  @trace()
   public async count(
     args: {
       where?: string;
@@ -2417,6 +2425,7 @@ class BaseModelSqlv2 {
     }
   }
 
+  @trace()
   public async mmList(
     { colId, parentId },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
@@ -2692,6 +2701,7 @@ class BaseModelSqlv2 {
     }
   }
 
+  @trace()
   public async multipleMmListFast(
     {
       colId,
@@ -2785,6 +2795,7 @@ class BaseModelSqlv2 {
     return _parentIds.map((id) => gs[id] || []);
   }
 
+  @trace()
   public async multipleMmList(
     {
       colId,
@@ -2894,6 +2905,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getMmChildrenExcludedListCount(
     { colId, pid = null },
     args,
@@ -2997,6 +3009,7 @@ class BaseModelSqlv2 {
     )?.count;
   }
 
+  @trace()
   public async multipleMmListCount({ colId, parentIds }) {
     const relColumn = (await this.model.getColumns(this.context)).find(
       (c) => c.id === colId,
@@ -3060,6 +3073,7 @@ class BaseModelSqlv2 {
     return parentIds.map((id) => gs?.[id]?.[0] || []);
   }
 
+  @trace()
   public async mmListCount({ colId, parentId }, args) {
     const { where } = this._getListArgs(args as any);
 
@@ -3135,6 +3149,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getMmChildrenExcludedList(
     { colId, pid = null },
     args,
@@ -3255,6 +3270,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getHmChildrenExcludedList(
     { colId, pid = null },
     args,
@@ -3341,6 +3357,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getHmChildrenExcludedListCount(
     { colId, pid = null },
     args,
@@ -3406,6 +3423,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getExcludedOneToOneChildrenList(
     { colId, cid = null },
     args,
@@ -3520,6 +3538,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getBtChildrenExcludedListCount(
     { colId, cid = null },
     args,
@@ -3585,6 +3604,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async countExcludedOneToOneChildren(
     { colId, cid = null },
     args,
@@ -3663,6 +3683,7 @@ class BaseModelSqlv2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getBtChildrenExcludedList(
     { colId, cid = null },
     args,
@@ -4193,6 +4214,7 @@ class BaseModelSqlv2 {
     return obj;
   }
 
+  @trace()
   public async shuffle({ qb }: { qb: Knex.QueryBuilder }): Promise<void> {
     if (this.isMySQL) {
       qb.orderByRaw('RAND()');
@@ -4206,6 +4228,7 @@ class BaseModelSqlv2 {
   // todo:
   //  pass view id as argument
   //  add option to get only pk and pv
+  @trace()
   public async selectObject({
     qb,
     columns: _columns,
@@ -5048,6 +5071,7 @@ class BaseModelSqlv2 {
     return this.dbDriver.clientType();
   }
 
+  @trace()
   public async readRecord(params: {
     idOrRecord: string | Record<string, any>;
     fieldsSet?: Set<string>;
@@ -6640,14 +6664,17 @@ class BaseModelSqlv2 {
     return;
   }
 
+  @trace()
   public async beforeInsert(data: any, _trx: any, req): Promise<void> {
     await this.handleHooks('before.insert', null, data, req);
   }
 
+  @trace()
   public async beforeBulkInsert(data: any, _trx: any, req): Promise<void> {
     await this.handleHooks('before.bulkInsert', null, data, req);
   }
 
+  @trace()
   public async afterInsert(data: any, _trx: any, req): Promise<void> {
     await this.handleHooks('after.insert', null, data, req);
     const id = this.extractPksValues(data);
@@ -6696,6 +6723,7 @@ class BaseModelSqlv2 {
     });
   }
 
+  @trace()
   public async afterBulkUpdate(
     prevData: any,
     newData: any,
@@ -6729,6 +6757,7 @@ class BaseModelSqlv2 {
     await this.handleRichTextMentions(prevData, newData, req);
   }
 
+  @trace()
   public async afterBulkDelete(
     data: any,
     _trx: any,
@@ -6759,6 +6788,7 @@ class BaseModelSqlv2 {
     });
   }
 
+  @trace()
   public async afterBulkInsert(data: any[], _trx: any, req): Promise<void> {
     await this.handleHooks('after.bulkInsert', null, data, req);
 
@@ -6780,6 +6810,7 @@ class BaseModelSqlv2 {
     });
   }
 
+  @trace()
   public async beforeUpdate(data: any, _trx: any, req): Promise<void> {
     const ignoreWebhook = req.query?.ignoreWebhook;
     if (ignoreWebhook) {
@@ -6792,6 +6823,7 @@ class BaseModelSqlv2 {
     }
   }
 
+  @trace()
   public async afterUpdate(
     prevData: any,
     newData: any,
@@ -6846,10 +6878,12 @@ class BaseModelSqlv2 {
     }
   }
 
+  @trace()
   public async beforeDelete(data: any, _trx: any, req): Promise<void> {
     await this.handleHooks('before.delete', null, data, req);
   }
 
+  @trace()
   public async afterDelete(data: any, _trx: any, req): Promise<void> {
     const id = this.extractPksValues(data);
     await Audit.insert({
@@ -7726,6 +7760,7 @@ class BaseModelSqlv2 {
     );
   }
 
+  @trace()
   public async afterAddChild(
     columnTitle,
     rowId,
@@ -7991,6 +8026,7 @@ class BaseModelSqlv2 {
     );
   }
 
+  @trace()
   public async afterRemoveChild(
     columnTitle,
     rowId,
@@ -8034,6 +8070,7 @@ class BaseModelSqlv2 {
     });
   }
 
+  @trace()
   public async groupedList(
     args: {
       groupColumnId: string;
@@ -8218,6 +8255,7 @@ class BaseModelSqlv2 {
     }
   }
 
+  @trace()
   public async groupedListCount(
     args: {
       groupColumnId: string;
@@ -8308,6 +8346,7 @@ class BaseModelSqlv2 {
     return await this.execAndParse(qb);
   }
 
+  @trace()
   public async execAndGetRows(query: string, trx?: Knex | CustomKnex) {
     trx = trx || this.dbDriver;
 
@@ -8328,6 +8367,7 @@ class BaseModelSqlv2 {
     }
   }
 
+  @trace()
   public async execAndParse(
     qb: Knex.QueryBuilder | string,
     dependencyColumns?: Column[],
@@ -8831,6 +8871,7 @@ class BaseModelSqlv2 {
     return d;
   }
 
+  @trace()
   public async getNestedColumn(column: Column) {
     if (column.uidt !== UITypes.Lookup) {
       return column;
@@ -8882,6 +8923,7 @@ class BaseModelSqlv2 {
     return data;
   }
 
+  @trace()
   public async convertAttachmentType(
     data: Record<string, any>,
     dependencyColumns?: Column[],

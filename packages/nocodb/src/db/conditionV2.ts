@@ -25,10 +25,10 @@ import Filter from '~/models/Filter';
 import { getAliasGenerator } from '~/utils';
 import { validateAndStringifyJson } from '~/utils/tsUtils';
 import { getColumnName } from '~/helpers/dbHelpers';
+import { trace } from '~/tracing/decorator'
 
 // tod: tobe fixed
 // extend(customParseFormat);
-
 export default async function conditionV2(
   baseModelSqlv2: BaseModelSqlv2,
   conditionObj: Filter | FilterType | FilterType[] | Filter[],

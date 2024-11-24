@@ -15,6 +15,7 @@ import { NcBaseError, NcError } from '~/helpers/catchError';
 import getAst from '~/helpers/getAst';
 import { PagedResponseImpl } from '~/helpers/PagedResponse';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
+import { trace } from '~/tracing/decorator'
 
 @Injectable()
 export class DatasService {
@@ -22,6 +23,7 @@ export class DatasService {
 
   constructor() {}
 
+  @trace()
   async dataList(
     context: NcContext,
     param: (PathParams | { view?: View; model: Model }) & {

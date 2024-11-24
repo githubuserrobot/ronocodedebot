@@ -130,6 +130,8 @@ import {
 } from '~/utils';
 import { MetaTable } from '~/utils/globals';
 import { chunkArray } from '~/utils/tsUtils';
+import { trace } from '~/tracing/decorator'
+
 
 dayjs.extend(utc);
 
@@ -184,6 +186,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     autoBind(this);
   }
 
+  @trace()
   public async readByPk(
     id?: any,
     validateFormula = false,
@@ -254,6 +257,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       : null;
   }
 
+  @trace()
   public async readByPkFromModel(
     model = this.model,
     viewId?: string,
@@ -283,6 +287,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
+  @trace()
   public async readOnlyPrimariesByPkFromModel(
     props: { model: Model; id: any; extractDisplayValueData?: boolean }[],
   ): Promise<any[]> {
@@ -305,6 +310,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  @trace()
   public async exist(id?: any): Promise<any> {
     const qb = this.dbDriver(this.tnPath);
     await this.model.getColumns(this.context);
@@ -322,6 +328,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: add support for sortArrJson
+  @trace()
   public async findOne(
     args: {
       where?: string;
@@ -391,6 +398,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
+  @trace()
   public async list(
     args: {
       where?: string;
@@ -584,6 +592,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
   }
 
+  @trace()
   public async count(
     args: {
       where?: string;
@@ -2435,6 +2444,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async mmList(
     { colId, parentId },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
@@ -2710,6 +2720,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async multipleMmListFast(
     {
       colId,
@@ -2803,6 +2814,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return _parentIds.map((id) => gs[id] || []);
   }
 
+  @trace()
   public async multipleMmList(
     {
       colId,
@@ -2902,6 +2914,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   // #region relation list count part 2
   // todo: naming & optimizing
+  @trace()
   public async getMmChildrenExcludedListCount(
     { colId, pid = null },
     args,
@@ -2913,6 +2926,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getMmChildrenExcludedList(
     { colId, pid = null },
     args,
@@ -2924,6 +2938,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getHmChildrenExcludedList(
     { colId, pid = null },
     args,
@@ -2935,6 +2950,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getHmChildrenExcludedListCount(
     { colId, pid = null },
     args,
@@ -2946,6 +2962,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getExcludedOneToOneChildrenList(
     { colId, cid = null },
     args,
@@ -2957,6 +2974,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getBtChildrenExcludedListCount(
     { colId, cid = null },
     args,
@@ -2968,6 +2986,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async countExcludedOneToOneChildren(
     { colId, cid = null },
     args,
@@ -2979,6 +2998,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: naming & optimizing
+  @trace()
   public async getBtChildrenExcludedList(
     { colId, cid = null },
     args,
@@ -3469,6 +3489,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
   }
 
+  @trace()
   public async shuffle({ qb }: { qb: Knex.QueryBuilder }): Promise<void> {
     if (this.isMySQL) {
       qb.orderByRaw('RAND()');
@@ -3482,6 +3503,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   // todo:
   //  pass view id as argument
   //  add option to get only pk and pv
+  @trace()
   public async selectObject({
     qb,
     columns: _columns,
@@ -4370,6 +4392,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return this.dbDriver.clientType();
   }
 
+  @trace()
   public async readRecord(params: {
     idOrRecord: string | Record<string, any>;
     fieldsSet?: Set<string>;
@@ -6284,6 +6307,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async afterBulkUpdate(
     prevData: any,
     newData: any,
@@ -6391,6 +6415,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     await this.handleRichTextMentions(prevData, newData, req);
   }
 
+  @trace()
   public async beforeUpdate(data: any, _trx: any, req): Promise<void> {
     const ignoreWebhook = req.query?.ignoreWebhook;
     if (ignoreWebhook) {
@@ -6403,6 +6428,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async afterUpdate(
     prevData: any,
     newData: any,
@@ -6484,6 +6510,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     await this.handleRichTextMentions(prevData, newData, req);
   }
 
+  @trace()
   public async beforeDelete(data: any, _trx: any, req): Promise<void> {
     if (this.model.synced) {
       NcError.badRequest('Cannot delete from synced table');
@@ -7041,6 +7068,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  @trace()
   public async groupedList(
     args: {
       groupColumnId: string;
@@ -7231,6 +7259,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async groupedListCount(
     args: {
       groupColumnId: string;
@@ -7325,6 +7354,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return await this.execAndParse(qb);
   }
 
+  @trace()
   public async execAndGetRows(query: string, trx?: Knex | CustomKnex) {
     trx = trx || this.dbDriver;
 
@@ -7345,6 +7375,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async execAndParse(
     qb: Knex.QueryBuilder | string,
     dependencyColumns?: Column[],

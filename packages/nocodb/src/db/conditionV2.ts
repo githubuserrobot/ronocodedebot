@@ -32,6 +32,7 @@ import { sanitize } from '~/helpers/sqlSanitize';
 import { type BarcodeColumn, BaseUser, type QrCodeColumn } from '~/models';
 import Filter from '~/models/Filter';
 import { getAliasGenerator } from '~/utils';
+import { trace } from '~/tracing/decorator'
 import { validateAndStringifyJson } from '~/utils/tsUtils';
 import { handleCurrentUserFilter } from '~/helpers/conditionHelpers';
 
@@ -40,7 +41,6 @@ dayjs.extend(timezone);
 
 // tod: tobe fixed
 // extend(customParseFormat);
-
 export default async function conditionV2(
   baseModelSqlv2: IBaseModelSqlV2,
   conditionObj: Filter | FilterType | FilterType[] | Filter[],

@@ -128,7 +128,9 @@ import {
 } from '~/utils';
 import { MetaTable } from '~/utils/globals';
 import { chunkArray } from '~/utils/tsUtils';
+import { trace } from '~/tracing/decorator'
 import { QUERY_STRING_FIELD_ID_ON_RESULT } from '~/constants';
+
 
 dayjs.extend(utc);
 
@@ -1297,6 +1299,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @trace()
   public async mmList(
     { colId, parentId },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
@@ -1572,6 +1575,397 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+<<<<<<< HEAD
+  public async multipleMmList(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
+  }
+
+  public async mmList(
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    selectAllRecords = false,
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
+    );
+  }
+
+  async multipleHmListCount({ colId, ids }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
+  }
+
+  async hmList(
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
+  }
+
+  async hmListCount({ colId, id }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
+  }
+
+||||||| parent of 13b229072c (Add traces for list calls)
+  public async multipleMmList(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
+  }
+
+  @trace()
+  public async mmList(
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    selectAllRecords = false,
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
+    );
+  }
+
+  async multipleHmListCount({ colId, ids }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
+  }
+
+  async hmList(
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
+  }
+
+  async hmListCount({ colId, id }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
+  }
+
+  @trace()
+  public async multipleMmListFast(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      parentIds: any[];
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
+  ) {
+    // skip duplicate id
+    const parentIds = [...new Set(_parentIds)];
+    const { where, sort, ...rest } = this._getListArgs(args as any);
+    const relColumn = (await this.model.getColumns(this.context)).find(
+      (c) => c.id === colId,
+    );
+
+    const relColOptions = (await relColumn.getColOptions(
+      this.context,
+    )) as LinkToAnotherRecordColumn;
+    const mmTable = await relColOptions.getMMModel(this.context);
+
+    // if mm table is not present then return
+    if (!mmTable) {
+      return;
+    }
+
+    const vtn = this.getTnPath(mmTable);
+    const vcn = (await relColOptions.getMMChildColumn(this.context))
+      .column_name;
+    const vrcn = (await relColOptions.getMMParentColumn(this.context))
+      .column_name;
+
+    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
+    const childTable = await (
+      await relColOptions.getParentColumn(this.context)
+    ).getModel(this.context);
+
+    const parentTable = await (
+      await relColOptions.getChildColumn(this.context)
+    ).getModel(this.context);
+
+    await parentTable.getColumns(this.context);
+    await childTable.getColumns(this.context)
+
+    const columnName = childTable.displayValue.column_name
+    const qb = this.dbDriver()
+
+    const childModel = await Model.getBaseModelSQL(this.context, {
+      dbDriver: this.dbDriver,
+      model: childTable,
+    });
+    await childModel.selectObject({ qb, fieldsSet: args.fieldsSet });
+
+    await this.applySortAndFilter({
+      table: childTable,
+      where,
+      qb,
+      sort,
+    });
+
+    var finalQb = qb
+      .with("filteredM2m", function () {
+        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
+      })
+      .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${GROUP_COL}`)
+      .from("filteredM2m")
+      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
+
+    const rtnId = childTable.id;
+
+    const children = await this.execAndParse(
+      finalQb,
+      await childTable.getColumns(this.context),
+      {ignoreCache: args.ignoreCache ?? false},
+    );
+
+    const proto = await (
+      await Model.getBaseModelSQL(this.context, {
+        id: rtnId,
+        dbDriver: this.dbDriver,
+      })
+    ).getProto();
+    
+    const gs = groupBy(
+      children.map((c) => {
+        c.__proto__ = proto;
+        return c;
+      }),
+      GROUP_COL,
+    );
+    return _parentIds.map((id) => gs[id] || []);
+  }
+
+  @trace()
+=======
+  @trace()
+  public async multipleMmListFast(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      parentIds: any[];
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
+  ) {
+    // skip duplicate id
+    const parentIds = [...new Set(_parentIds)];
+    const { where, sort, ...rest } = this._getListArgs(args as any);
+    const relColumn = (await this.model.getColumns(this.context)).find(
+      (c) => c.id === colId,
+    );
+
+    const relColOptions = (await relColumn.getColOptions(
+      this.context,
+    )) as LinkToAnotherRecordColumn;
+    const mmTable = await relColOptions.getMMModel(this.context);
+
+    // if mm table is not present then return
+    if (!mmTable) {
+      return;
+    }
+
+    const vtn = this.getTnPath(mmTable);
+    const vcn = (await relColOptions.getMMChildColumn(this.context))
+      .column_name;
+    const vrcn = (await relColOptions.getMMParentColumn(this.context))
+      .column_name;
+
+    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
+    const childTable = await (
+      await relColOptions.getParentColumn(this.context)
+    ).getModel(this.context);
+
+    const parentTable = await (
+      await relColOptions.getChildColumn(this.context)
+    ).getModel(this.context);
+
+    await parentTable.getColumns(this.context);
+    await childTable.getColumns(this.context)
+
+    const columnName = childTable.displayValue.column_name
+    const qb = this.dbDriver()
+
+    const childModel = await Model.getBaseModelSQL(this.context, {
+      dbDriver: this.dbDriver,
+      model: childTable,
+    });
+    await childModel.selectObject({ qb, fieldsSet: args.fieldsSet });
+
+    await this.applySortAndFilter({
+      table: childTable,
+      where,
+      qb,
+      sort,
+    });
+
+    var finalQb = qb
+      .with("filteredM2m", function () {
+        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
+      })
+      .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${GROUP_COL}`)
+      .from("filteredM2m")
+      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
+
+    const rtnId = childTable.id;
+
+    const children = await this.execAndParse(
+      finalQb,
+      await childTable.getColumns(this.context),
+      {ignoreCache: args.ignoreCache ?? false},
+    );
+
+    const proto = await (
+      await Model.getBaseModelSQL(this.context, {
+        id: rtnId,
+        dbDriver: this.dbDriver,
+      })
+    ).getProto();
+    
+    const gs = groupBy(
+      children.map((c) => {
+        c.__proto__ = proto;
+        return c;
+      }),
+      GROUP_COL,
+    );
+    return _parentIds.map((id) => gs[id] || []);
+  }
+
+  @trace()
+<<<<<<< HEAD
+||||||| parent of 38aef67bd0 (Add traces for list calls)
+  public async multipleMmList(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
+  }
+
+  public async mmList(
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    selectAllRecords = false,
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
+    );
+  }
+
+  async multipleHmListCount({ colId, ids }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
+  }
+
+  async hmList(
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
+  }
+
+  async hmListCount({ colId, id }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
+  }
+
+=======
   public async multipleMmList(
     {
       colId,
@@ -5310,6 +5704,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  @trace()
   public async groupedList(
     args: {
       groupColumnId: string;

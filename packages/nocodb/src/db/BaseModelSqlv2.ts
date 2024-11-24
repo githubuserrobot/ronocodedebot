@@ -7699,6 +7699,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
+  @trace()
   protected async _convertAttachmentType(
     attachmentColumns: Record<string, any>[],
     d: Record<string, any>,

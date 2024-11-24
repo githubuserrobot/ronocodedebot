@@ -14,6 +14,7 @@ import type { PutObjectRequest, S3 as S3Client } from '@aws-sdk/client-s3';
 import type { IStorageAdapterV2, XcFile } from '~/types/nc-plugin';
 import { getFilteredAgents } from '~/utils/ssrf';
 import { generateTempFilePath, waitForStreamClose } from '~/utils/pluginUtils';
+import { trace } from '~/tracing/decorator'
 import { NcError } from '~/helpers/ncError';
 import { NC_ATTACHMENT_FIELD_SIZE } from '~/constants';
 
@@ -169,6 +170,7 @@ export default class GenericS3 implements IStorageAdapterV2 {
     }
   }
 
+  @trace()
   public async getSignedUrl(
     key,
     expiresInSeconds = 7200,

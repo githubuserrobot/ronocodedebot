@@ -3,6 +3,8 @@ import RedisMockCacheMgr from './RedisMockCacheMgr';
 import { isCacheBypassed } from './cacheBypassScope';
 import type { NcContext } from 'nocodb-sdk';
 import type CacheMgr from './CacheMgr';
+import { trace } from '~/tracing/decorator'
+
 import { CACHE_PREFIX, CacheGetType } from '~/utils/globals';
 import { getRedisURL } from '~/helpers/redisHelpers';
 
@@ -113,6 +115,7 @@ export default class NocoCache {
     );
   }
 
+  @trace()
   public static async get(context: CacheContext, key, type): Promise<any> {
     if (this.cacheDisabled || isCacheBypassed()) {
       if (type === CacheGetType.TYPE_ARRAY) return Promise.resolve([]);

@@ -13,6 +13,7 @@ import NocoCache from '~/cache/NocoCache';
 import { extractProps } from '~/helpers/extractProps';
 import View from '~/models/View';
 import { isReplay } from '~/helpers/replayScope';
+import { trace } from '~/tracing/decorator'
 
 export default class Sort {
   id: string;
@@ -197,6 +198,7 @@ export default class Sort {
     );
   }
 
+  @trace()
   public static async list(
     context: NcContext,
     { viewId }: { viewId: string },

@@ -18,6 +18,7 @@ import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 import { QUERY_STRING_FIELD_ID_ON_RESULT } from '~/constants';
 import { TraceCommand } from '~/decorators/trace-command.decorator';
 import { OperationName } from '~/command-registry/op-names';
+import { trace } from '~/tracing/decorator';
 
 @Injectable()
 export class DatasService {
@@ -25,6 +26,7 @@ export class DatasService {
 
   constructor() {}
 
+  @trace()
   async dataList(
     context: NcContext,
     param: (PathParams | { view?: View; model: Model }) & {

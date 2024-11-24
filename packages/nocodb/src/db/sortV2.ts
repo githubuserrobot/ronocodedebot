@@ -5,6 +5,7 @@ import { Sort } from '~/models';
 import { NcError } from '~/helpers/catchError';
 import { sanitize } from '~/helpers/sqlSanitize';
 import { getRefColumnIfAlias } from '~/helpers';
+import { trace } from '~/tracing/decorator'
 
 export default async function sortV2(
   baseModelSqlv2: IBaseModelSqlV2,

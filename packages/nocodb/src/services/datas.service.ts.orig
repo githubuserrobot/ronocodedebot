@@ -263,6 +263,26 @@ export class DatasService {
         try {
           data = await nocoExecute(
             ast,
+<<<<<<< HEAD
+            await baseModel.list(listArgs, { ...listArgs, 
+              apiVersion: param.apiVersion,
+              ignoreViewFilterAndSort,
+              throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+              ignorePagination: param.ignorePagination,
+              limitOverride: param.limitOverride,
+              ignoreCache: param.ignoreCache,
+            }),
+||||||| parent of 3cabc2e038 (Skip checking cache for URLs in cache warmer)
+            await baseModel.list(
+              { ...listArgs, apiVersion: param.apiVersion },
+              {
+                ignoreViewFilterAndSort,
+                throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+                ignorePagination: param.ignorePagination,
+                limitOverride: param.limitOverride,
+              },
+            ),
+=======
             await baseModel.list(
               { ...listArgs, apiVersion: param.apiVersion },
               {
@@ -273,6 +293,7 @@ export class DatasService {
                 ignoreCache: param.ignoreCache,
               },
             ),
+>>>>>>> 3cabc2e038 (Skip checking cache for URLs in cache warmer)
             {},
             listArgs,
           );

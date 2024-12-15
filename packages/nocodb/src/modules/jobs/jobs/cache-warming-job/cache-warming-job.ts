@@ -65,6 +65,7 @@ export class CacheWarmingJob {
         baseModel,
         ignoreViewFilterAndSort: true,
         limitOverride: cachePageSize,
+        ignoreCache:true,
       })
   
     while (true) {
@@ -78,6 +79,7 @@ export class CacheWarmingJob {
             baseModel,
             ignoreViewFilterAndSort: true,
             limitOverride: cachePageSize,
+            ignoreCache: true,
           })
         offset += data.pageInfo.pageSize
         await new Promise(r => setTimeout(r, 1000));

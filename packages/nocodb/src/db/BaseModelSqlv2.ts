@@ -583,6 +583,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       data = await this.execAndParse(qb, undefined, {
         apiVersion: args.apiVersion ?? this.context.api_version,
         skipSubstitutingColumnIds: options.skipSubstitutingColumnIds,
+        ignoreCache: options.ignoreCache ?? false
       });
     } catch (e) {
       if (validateFormula || !haveFormulaColumn(columns)) throw e;
@@ -1278,7 +1279,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
       const children = await this.execAndParse(
         childQb,
-        await childTable.getColumns(this.context),
+        await childTable.getColumns(this.context), 
+        {ignoreCache: args.ignoreCache ?? false}
       );
       const proto = await (
         await Model.getBaseModelSQL(this.context, {
@@ -1899,8 +1901,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   @trace()
-<<<<<<< HEAD
-||||||| parent of 38aef67bd0 (Add traces for list calls)
   public async multipleMmList(
     {
       colId,
@@ -1965,6 +1965,73 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+<<<<<<< HEAD
+=======
+  public async multipleMmList(
+    {
+      colId,
+      parentIds: _parentIds,
+    }: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
+  }
+
+  public async mmList(
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    selectAllRecords = false,
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
+    );
+  }
+
+  async multipleHmListCount({ colId, ids }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
+  }
+
+  async hmList(
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
+  }
+
+  async hmListCount({ colId, id }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
+  }
+
+||||||| parent of ffff1e30aa (Skip checking cache for URLs in cache warmer)
 =======
   public async multipleMmList(
     {
@@ -2253,8 +2320,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   async getProto({
     apiVersion = NcApiVersion.V2,
+    ignoreCache = false
   }: {
     apiVersion?: NcApiVersion;
+    ignoreCache?: boolean;
   } = {}) {
     if (this._proto) {
       return this._proto as ResolverObj;
@@ -2305,6 +2374,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               if (colOptions?.type === 'hm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
+                    var args = (listLoader as any).args
+                    if (options != null ){
+                      args["ignoreCache"] = options.ignoreCache ?? false
+                    }
                     if (ids.length > 1) {
                       const data = await this.multipleHmList(
                         {
@@ -2351,6 +2424,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               } else if (colOptions.type === 'mm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
+                    var args = (listLoader as any).args ?? []
+                    if (options != null) {
+                      args["ignoreCache"] = options.ignoreCache ?? false
+                    }
                     if (ids?.length > 1) {
                       const data = await this.multipleMmList(
                         {
@@ -2577,6 +2654,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                   const listLoader = new DataLoader(
                     async (ids: string[]) => {
                       if (ids.length > 1) {
+                        var args = (listLoader as any).args ?? []
+                        if (options != null ){
+                          args["ignoreCache"] = options.ignoreCache ?? false
+                        }
                         const data = await this.multipleHmList(
                           {
                             colId: column.id,

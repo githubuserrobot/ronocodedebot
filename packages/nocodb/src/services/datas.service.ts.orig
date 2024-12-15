@@ -284,10 +284,22 @@ export class DatasService {
                 throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
                 ignorePagination: param.ignorePagination,
                 limitOverride: param.limitOverride,
-                ignoreCache: param.ignoreCache,
+<<<<<<< HEAD
                 skipSubstitutingColumnIds:
                   context.api_version === NcApiVersion.V3 &&
                   query?.[QUERY_STRING_FIELD_ID_ON_RESULT] === 'true',
+||||||| parent of ffff1e30aa (Skip checking cache for URLs in cache warmer)
+            await baseModel.list(listArgs, { ...listArgs, 
+              apiVersion: param.apiVersion,
+              ignoreViewFilterAndSort,
+              throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+              ignorePagination: param.ignorePagination,
+              limitOverride: param.limitOverride,
+              ignoreCache: param.ignoreCache,
+            }),
+=======
+                ignoreCache: param.ignoreCache,
+>>>>>>> ffff1e30aa (Skip checking cache for URLs in cache warmer)
               },
             ),
             {},

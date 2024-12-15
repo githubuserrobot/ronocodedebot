@@ -464,6 +464,7 @@ class BaseModelSqlv2 {
       validateFormula?: boolean;
       throwErrorIfInvalidParams?: boolean;
       limitOverride?: number;
+      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {
@@ -609,11 +610,11 @@ class BaseModelSqlv2 {
         applyPaginate(qb, { ...rest, limit: limitOverride });
       }
     }
-    const proto = await this.getProto();
+    const proto = await this.getProto({ignoreCache: options.ignoreCache ?? false});
 
     let data;
     try {
-      data = await this.execAndParse(qb);
+      data = await this.execAndParse(qb, null, {ignoreCache: options.ignoreCache ?? false});
     } catch (e) {
       if (validateFormula || !haveFormulaColumn(columns)) throw e;
       logger.log(e);
@@ -2337,7 +2338,7 @@ class BaseModelSqlv2 {
 
   async multipleHmList(
     { colId, ids: _ids }: { colId: string; ids: any[] },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
   ) {
     try {
       // skip duplicate id
@@ -2404,7 +2405,8 @@ class BaseModelSqlv2 {
 
       const children = await this.execAndParse(
         childQb,
-        await childTable.getColumns(this.context),
+        await childTable.getColumns(this.context), 
+        {ignoreCache: args.ignoreCache ?? false}
       );
       const proto = await (
         await Model.getBaseModelSQL(this.context, {
@@ -2710,7 +2712,7 @@ class BaseModelSqlv2 {
       colId: string;
       parentIds: any[];
     },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
   ) {
     // skip duplicate id
     const parentIds = [...new Set(_parentIds)];
@@ -2776,6 +2778,7 @@ class BaseModelSqlv2 {
     const children = await this.execAndParse(
       finalQb,
       await childTable.getColumns(this.context),
+      {ignoreCache: args.ignoreCache ?? false},
     );
 
     const proto = await (
@@ -3830,7 +3833,7 @@ class BaseModelSqlv2 {
     return qb;
   }
 
-  async getProto() {
+  async getProto(options?: {ignoreCache: boolean}) {
     if (this._proto) {
       return this._proto;
     }
@@ -3876,13 +3879,18 @@ class BaseModelSqlv2 {
               if (colOptions?.type === 'hm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
+                    var args = (listLoader as any).args
+                    if (options != null ){
+                      args["ignoreCache"] = options.ignoreCache ?? false
+                    }
+                    
                     if (ids.length > 1) {
                       const data = await this.multipleHmList(
                         {
                           colId: column.id,
                           ids,
                         },
-                        (listLoader as any).args,
+                        args,
                       );
                       return ids.map((id: string) =>
                         data[id] ? data[id] : [],
@@ -3894,7 +3902,7 @@ class BaseModelSqlv2 {
                             colId: column.id,
                             id: ids[0],
                           },
-                          (listLoader as any).args,
+                          args,
                         ),
                       ];
                     }
@@ -3918,13 +3926,17 @@ class BaseModelSqlv2 {
               } else if (colOptions.type === 'mm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
+                    var args = (listLoader as any).args ?? []
+                    if (options != null) {
+                      args["ignoreCache"] = options.ignoreCache ?? false
+                    }
                     if (ids?.length > 1) {
                       const data = await this.multipleMmListFast(
                         {
                           parentIds: ids,
                           colId: column.id,
                         },
-                        (listLoader as any).args,
+                        args,
                       );
                       return data;
                     } else {
@@ -3934,7 +3946,7 @@ class BaseModelSqlv2 {
                             parentId: ids[0],
                             colId: column.id,
                           },
-                          (listLoader as any).args,
+                          args,
                         ),
                       ];
                     }
@@ -4139,12 +4151,16 @@ class BaseModelSqlv2 {
                   const listLoader = new DataLoader(
                     async (ids: string[]) => {
                       if (ids.length > 1) {
+                        var args = (listLoader as any).args ?? []
+                        if (options != null ){
+                          args["ignoreCache"] = options.ignoreCache ?? false
+                        }
                         const data = await this.multipleHmList(
                           {
                             colId: column.id,
                             ids,
                           },
-                          (listLoader as any).args,
+                          args,
                         );
                         return ids.map((id: string) =>
                           data[id] ? data[id]?.[0] : null,
@@ -8380,6 +8396,7 @@ class BaseModelSqlv2 {
       raw?: boolean; // alias for skipDateConversion and skipAttachmentConversion
       first?: boolean;
       bulkAggregate?: boolean;
+      ignoreCache?: boolean;
     } = {
       skipDateConversion: false,
       skipAttachmentConversion: false,
@@ -8389,6 +8406,7 @@ class BaseModelSqlv2 {
       raw: false,
       first: false,
       bulkAggregate: false,
+      ignoreCache: false,
     },
   ) {
     if (options.raw) {
@@ -8413,7 +8431,7 @@ class BaseModelSqlv2 {
 
     // update attachment fields
     if (!options.skipAttachmentConversion) {
-      data = await this.convertAttachmentType(data, dependencyColumns);
+      data = await this.convertAttachmentType(data, dependencyColumns, options.ignoreCache ?? false);
     }
 
     // update date time fields
@@ -8668,7 +8686,9 @@ class BaseModelSqlv2 {
   protected async _convertAttachmentType(
     attachmentColumns: Record<string, any>[],
     d: Record<string, any>,
+    ignoreCache?: boolean,
   ) {
+    var ignoreCache = ignoreCache ?? false
     try {
       if (d) {
         const promises = [];
@@ -8715,15 +8735,17 @@ class BaseModelSqlv2 {
                       lookedUpAttachment.thumbnails,
                     )) {
                       promises.push(
-                        PresignedUrl.signAttachment({
-                          attachment: {
-                            ...lookedUpAttachment,
-                            path: `${thumbnailPath}/${key}.jpg`,
-                          },
-                          filename: lookedUpAttachment.title,
-                          mimetype: 'image/jpeg',
-                          nestedKeys: ['thumbnails', key],
-                        }),
+                        PresignedUrl.signAttachment(
+                          {
+                            attachment: {
+                              ...lookedUpAttachment,
+                              path: `${thumbnailPath}/${key}.jpg`,
+                            },
+                            filename: lookedUpAttachment.title,
+                            mimetype: 'image/jpeg',
+                            nestedKeys: ['thumbnails', key],
+                            ignoreCache: ignoreCache
+                          })
                       );
                     }
                   } else if (lookedUpAttachment?.url) {
@@ -8731,6 +8753,7 @@ class BaseModelSqlv2 {
                       PresignedUrl.signAttachment({
                         attachment: lookedUpAttachment,
                         filename: lookedUpAttachment.title,
+                        ignoreCache: ignoreCache
                       }),
                     );
 
@@ -8772,6 +8795,7 @@ class BaseModelSqlv2 {
                     PresignedUrl.signAttachment({
                       attachment,
                       filename: attachment.title,
+                      ignoreCache: ignoreCache
                     }),
                   );
 
@@ -8800,6 +8824,7 @@ class BaseModelSqlv2 {
                         filename: attachment.title,
                         mimetype: 'image/jpeg',
                         nestedKeys: ['thumbnails', key],
+                        ignoreCache: ignoreCache
                       }),
                     );
                   }
@@ -8808,6 +8833,7 @@ class BaseModelSqlv2 {
                     PresignedUrl.signAttachment({
                       attachment,
                       filename: attachment.title,
+                      ignoreCache: ignoreCache
                     }),
                   );
 
@@ -8832,6 +8858,7 @@ class BaseModelSqlv2 {
                         filename: attachment.title,
                         mimetype: 'image/jpeg',
                         nestedKeys: ['thumbnails', key],
+                        ignoreCache: ignoreCache
                       }),
                     );
                   }
@@ -8928,7 +8955,9 @@ class BaseModelSqlv2 {
   public async convertAttachmentType(
     data: Record<string, any>,
     dependencyColumns?: Column[],
+    ignoreCache?: boolean
   ) {
+    var ignoreCache = ignoreCache ?? false
     // attachment is stored in text and parse in UI
     // convertAttachmentType is used to convert the response in string to array of object in API response
     if (data) {
@@ -8947,14 +8976,13 @@ class BaseModelSqlv2 {
           }
         }
       }
-
       if (attachmentColumns.length) {
         if (Array.isArray(data)) {
           data = await Promise.all(
-            data.map((d) => this._convertAttachmentType(attachmentColumns, d)),
+            data.map((d) => this._convertAttachmentType(attachmentColumns, d, ignoreCache)),
           );
         } else {
-          data = await this._convertAttachmentType(attachmentColumns, data);
+          data = await this._convertAttachmentType(attachmentColumns, data, ignoreCache);
         }
       }
     }

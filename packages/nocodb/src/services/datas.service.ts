@@ -198,6 +198,7 @@ export class DatasService {
       ignorePagination?: boolean;
       limitOverride?: number;
       customConditions?: Filter[];
+      ignoreCache?: boolean;
     },
   ) {
     const {
@@ -247,6 +248,7 @@ export class DatasService {
               throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
               ignorePagination: param.ignorePagination,
               limitOverride: param.limitOverride,
+              ignoreCache: param.ignoreCache,
             }),
             {},
             listArgs,

@@ -226,6 +226,7 @@ export class DatasService {
       includeSortAndFilterColumns?: boolean;
       includeRowColorColumns?: boolean;
       skipSortBasedOnOrderCol?: boolean;
+      ignoreCache?: boolean;
     },
   ) {
     const {
@@ -290,6 +291,7 @@ export class DatasService {
                   context.api_version === NcApiVersion.V3 &&
                   query?.[QUERY_STRING_FIELD_ID_ON_RESULT] === 'true',
                 skipSortBasedOnOrderCol,
+                ignoreCache: param.ignoreCache,
               },
             ),
             {},

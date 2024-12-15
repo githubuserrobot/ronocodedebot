@@ -432,6 +432,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       limitOverride?: number;
       skipSubstitutingColumnIds?: boolean;
       skipSortBasedOnOrderCol?: boolean;
+      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {
@@ -593,13 +594,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         applyPaginate(qb, { ...rest, limit: limitOverride });
       }
     }
-    const proto = await this.getProto();
+    const proto = await this.getProto({ignoreCache: options.ignoreCache ?? false});
 
     let data;
     try {
       data = await this.execAndParse(qb, undefined, {
         apiVersion: args.apiVersion ?? this.context.api_version,
         skipSubstitutingColumnIds: options.skipSubstitutingColumnIds,
+        ignoreCache: options.ignoreCache ?? false,
       });
     } catch (e) {
       if (validateFormula || !haveFormulaColumn(columns)) throw e;
@@ -1890,8 +1892,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   async getProto({
     apiVersion = NcApiVersion.V2,
+    ignoreCache = false,
   }: {
     apiVersion?: NcApiVersion;
+    ignoreCache?: boolean;
   } = {}) {
     if (this._proto) {
       return this._proto as ResolverObj;
@@ -1942,13 +1946,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               if (colOptions?.type === 'hm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
+                    var args = (listLoader as any).args
+                    if (ignoreCache){
+                      args["ignoreCache"] = ignoreCache
+                    }
+
                     if (ids.length > 1) {
                       const data = await this.multipleHmList(
                         {
                           colId: column.id,
                           ids,
                         },
-                        (listLoader as any).args,
+                        args,
                       );
                       return ids.map((id: string) =>
                         data[id] ? data[id] : [],
@@ -1960,7 +1969,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                             colId: column.id,
                             id: ids[0],
                           },
-                          (listLoader as any).args,
+                          args,
                         ),
                       ];
                     }
@@ -1984,13 +1993,17 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               } else if (colOptions.type === 'mm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
+                    var args = (listLoader as any).args ?? []
+                    if (ignoreCache) {
+                      args["ignoreCache"] = ignoreCache
+                    }
                     if (ids?.length > 1) {
                       const data = await this.multipleMmListFast(
                         {
                           parentIds: ids,
                           colId: column.id,
                         },
-                        (listLoader as any).args,
+                        args,
                       );
                       return data;
                     } else {
@@ -2000,7 +2013,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                             parentId: ids[0],
                             colId: column.id,
                           },
-                          (listLoader as any).args,
+                          args,
                         ),
                       ];
                     }
@@ -2204,13 +2217,17 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                 } else {
                   const listLoader = new DataLoader(
                     async (ids: string[]) => {
+                      var args = (listLoader as any).args ?? []
+                      if (ignoreCache){
+                        args["ignoreCache"] = ignoreCache
+                      }
                       if (ids.length > 1) {
                         const data = await this.multipleHmList(
                           {
                             colId: column.id,
                             ids,
                           },
-                          (listLoader as any).args,
+                          args,
                         );
                         return ids.map((id: string) =>
                           data[id] ? data[id]?.[0] : null,
@@ -2223,7 +2240,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                                 colId: column.id,
                                 id: ids[0],
                               },
-                              (listLoader as any).args,
+                              args,
                             )
                           )?.[0] ?? null,
                         ];
@@ -5413,6 +5430,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       first?: boolean;
       bulkAggregate?: boolean;
       apiVersion?: NcApiVersion;
+      ignoreCache?: boolean;
     } = {
       skipDateConversion: false,
       skipAttachmentConversion: false,
@@ -5423,6 +5441,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       first: false,
       bulkAggregate: false,
       apiVersion: NcApiVersion.V2,
+      ignoreCache: false,
     },
   ) {
     if (options.raw) {
@@ -5447,7 +5466,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     // update attachment fields
     if (!options.skipAttachmentConversion) {
-      data = await this.convertAttachmentType(data, dependencyColumns);
+      data = await this.convertAttachmentType(data, dependencyColumns, options.ignoreCache);
     }
 
     // update date time fields
@@ -5785,6 +5804,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   protected async _convertAttachmentType(
     attachmentColumns: Record<string, any>[],
     d: Record<string, any>,
+    ignoreCache = false,
   ) {
     try {
       if (!d || !attachmentColumns.length) {
@@ -5852,6 +5872,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             await PresignedUrl.signAttachment({
               attachment: item,
               filename: item.title,
+              ignoreCache: ignoreCache,
             });
           } catch (e) {}
         },
@@ -5872,6 +5893,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               filename: attachment.title,
               mimetype: 'image/jpeg',
               nestedKeys: ['thumbnails', thumbnailKey],
+              ignoreCache: ignoreCache,
             });
           } catch (e) {}
         },
@@ -6093,6 +6115,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   public async convertAttachmentType(
     data: Record<string, any>,
     dependencyColumns?: Column[],
+    ignoreCache = false,
   ) {
     // attachment is stored in text and parse in UI
     // convertAttachmentType is used to convert the response in string to array of object in API response
@@ -6145,10 +6168,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     if (Array.isArray(data)) {
       return Promise.all(
-        data.map((d) => this._convertAttachmentType(allAttachmentColumns, d)),
+        data.map((d) => this._convertAttachmentType(allAttachmentColumns, d, ignoreCache)),
       );
     } else {
-      return this._convertAttachmentType(allAttachmentColumns, data);
+      return this._convertAttachmentType(allAttachmentColumns, data, ignoreCache);
     }
   }
 

@@ -210,6 +210,7 @@ export class DatasService {
       ignorePagination?: boolean;
       limitOverride?: number;
       customConditions?: Filter[];
+      ignoreCache?: boolean;
       getHiddenColumns?: boolean;
       apiVersion?: NcApiVersion;
       includeSortAndFilterColumns?: boolean;
@@ -269,6 +270,7 @@ export class DatasService {
                 throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
                 ignorePagination: param.ignorePagination,
                 limitOverride: param.limitOverride,
+                ignoreCache: param.ignoreCache,
               },
             ),
             {},

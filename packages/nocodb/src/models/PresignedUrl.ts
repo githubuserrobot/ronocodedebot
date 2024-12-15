@@ -101,10 +101,12 @@ export default class PresignedUrl {
       filename?: string;
       preview?: boolean;
       mimetype?: string;
+      ignoreCache?: boolean
       encoding?: string;
     },
     ncMeta = Noco.ncMeta,
   ) {
+    var ignoreCache = param.ignoreCache ?? false
     const isUrl = /^https?:\/\//i.test(param.pathOrUrl);
 
     let path = (
@@ -177,8 +179,7 @@ export default class PresignedUrl {
       `${CacheScope.PRESIGNED_URL}:path:${slash(cachePath)}`,
       CacheGetType.TYPE_OBJECT,
     );
-
-    if (url) {
+    if (url && !ignoreCache) {
       // if present, check if the expiry date is greater than now
       if (new Date(url.expires_at).getTime() > new Date().getTime()) {
         // if greater, return the url
@@ -238,6 +239,7 @@ export default class PresignedUrl {
       expireSeconds?: number;
       // allow writing to nested property instead of root (used for thumbnails)
       nestedKeys?: string[];
+      ignoreCache?: boolean
     },
     ncMeta = Noco.ncMeta,
   ) {

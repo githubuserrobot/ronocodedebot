@@ -646,6 +646,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipSortBasedOnOrderCol?: boolean;
       ignoreRls?: boolean;
       deletedOnly?: boolean;
+      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {
@@ -657,6 +658,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipSortBasedOnOrderCol = false,
       ignoreRls: ignoreRlsOpt = false,
       deletedOnly = false,
+      ignoreCache: _ignoreCache = false,
     } = options;
 
     const columns = await this.model.getColumns(this.context);

@@ -31,6 +31,7 @@ export class DatasService {
       ignorePagination?: boolean;
       limitOverride?: number;
       throwErrorIfInvalidParams?: boolean;
+      getHiddenColumns?: boolean;
     },
   ) {
     let { model, view } = param as { view?: View; model?: Model };
@@ -72,6 +73,7 @@ export class DatasService {
       throwErrorIfInvalidParams: true,
       ignorePagination: param.ignorePagination,
       limitOverride: param.limitOverride,
+      getHiddenColumns: param.getHiddenColumns,
     });
   }
 
@@ -117,6 +119,7 @@ export class DatasService {
       body: unknown;
       cookie: any;
       disableOptimization?: boolean;
+      query: any;
     },
   ) {
     const { model, view } = await getViewAndModelByAliasOrId(context, param);
@@ -130,7 +133,12 @@ export class DatasService {
       source,
     });
 
-    return await baseModel.nestedInsert(param.body, null, param.cookie);
+    return await baseModel.nestedInsert(
+      param.body,
+      null,
+      param.cookie,
+      param?.query,
+    );
   }
 
   async dataUpdate(
@@ -199,6 +207,7 @@ export class DatasService {
       limitOverride?: number;
       customConditions?: Filter[];
       ignoreCache?: boolean;
+      getHiddenColumns?: boolean;
     },
   ) {
     const {
@@ -224,6 +233,7 @@ export class DatasService {
       query,
       view: view,
       throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+      getHiddenColumn: param.getHiddenColumns,
     });
 
     const listArgs: any = dependencyFields;

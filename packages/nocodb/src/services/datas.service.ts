@@ -14,7 +14,12 @@ import { NcBaseError, NcError } from '~/helpers/catchError';
 import getAst from '~/helpers/getAst';
 import { PagedResponseImpl } from '~/helpers/PagedResponse';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
+<<<<<<< HEAD
 import { trace } from '~/tracing/decorator'
+||||||| parent of b9ee0e68cd (feat: v3 data APIs)
+=======
+import {NcApiVersion} from "nc-gui/lib/enums";
+>>>>>>> b9ee0e68cd (feat: v3 data APIs)
 
 @Injectable()
 export class DatasService {
@@ -32,6 +37,7 @@ export class DatasService {
       limitOverride?: number;
       throwErrorIfInvalidParams?: boolean;
       getHiddenColumns?: boolean;
+      apiVersion?: NcApiVersion;
     },
   ) {
     let { model, view } = param as { view?: View; model?: Model };
@@ -74,6 +80,7 @@ export class DatasService {
       ignorePagination: param.ignorePagination,
       limitOverride: param.limitOverride,
       getHiddenColumns: param.getHiddenColumns,
+      apiVersion: param.apiVersion,
     });
   }
 
@@ -208,6 +215,7 @@ export class DatasService {
       customConditions?: Filter[];
       ignoreCache?: boolean;
       getHiddenColumns?: boolean;
+      apiVersion?: NcApiVersion;
     },
   ) {
     const {
@@ -215,6 +223,7 @@ export class DatasService {
       view: view,
       query = {},
       ignoreViewFilterAndSort = false,
+      apiVersion,
     } = param;
 
     const source = await Source.get(context, model.source_id);
@@ -234,6 +243,7 @@ export class DatasService {
       view: view,
       throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
       getHiddenColumn: param.getHiddenColumns,
+      apiVersion,
     });
 
     const listArgs: any = dependencyFields;
@@ -253,7 +263,8 @@ export class DatasService {
         try {
           data = await nocoExecute(
             ast,
-            await baseModel.list(listArgs, {
+            await baseModel.list(listArgs, { ...listArgs, 
+              apiVersion: param.apiVersion,
               ignoreViewFilterAndSort,
               throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
               ignorePagination: param.ignorePagination,
@@ -475,7 +486,7 @@ export class DatasService {
 
   async dataListByViewId(
     context: NcContext,
-    param: { viewId: string; query: any },
+    param: { viewId: string; query: any; apiVersion?: NcApiVersion },
   ) {
     const view = await View.get(context, param.viewId);
 
@@ -485,7 +496,12 @@ export class DatasService {
 
     if (!model) NcError.tableNotFound(view?.fk_model_id || param.viewId);
 
-    return await this.getDataList(context, { model, view, query: param.query });
+    return await this.getDataList(context, {
+      model,
+      view,
+      query: param.query,
+      apiVersion: param.apiVersion,
+    });
   }
 
   async mmList(

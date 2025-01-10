@@ -94,6 +94,7 @@ import applyAggregation from '~/db/aggregation';
 import { trace } from '~/tracing/decorator'
 import { chunkArray } from '~/utils/tsUtils';
 import {
+  excludeAttachmentProps,
   generateAuditV1Payload,
   remapWithAlias,
   removeBlankPropsAndMask,
@@ -7215,7 +7216,7 @@ class BaseModelSqlv2 {
             row_id: id,
           },
           details: {
-            data: filteredAuditData,
+            data: formatDataForAudit(filteredAuditData, this.model.columns),
             column_meta: extractColsMetaForAudit(
               this.model.columns,
               filteredAuditData,
@@ -7277,12 +7278,15 @@ class BaseModelSqlv2 {
                 row_id: this.extractPksValues(data, true),
               },
               details: {
-                data: removeBlankPropsAndMask(data, [
-                  'created_at',
-                  'updated_at',
-                  'created_by',
-                  'updated_by',
-                ]),
+                data: formatDataForAudit(
+                  removeBlankPropsAndMask(data, [
+                    'created_at',
+                    'updated_at',
+                    'created_by',
+                    'updated_by',
+                  ]),
+                  this.model.columns,
+                ),
                 column_meta: extractColsMetaForAudit(this.model.columns, data),
               },
               req,
@@ -7358,7 +7362,10 @@ class BaseModelSqlv2 {
             {
               details: {
                 data: d
-                  ? removeBlankPropsAndMask(d, ['CreatedAt', 'UpdatedAt'])
+                  ? formatDataForAudit(
+                      removeBlankPropsAndMask(d, ['CreatedAt', 'UpdatedAt']),
+                      this.model.columns,
+                    )
                   : null,
                 column_meta,
               },
@@ -7423,13 +7430,19 @@ class BaseModelSqlv2 {
                 },
                 details: {
                   old_data: prevData?.[i]
-                    ? removeBlankPropsAndMask(prevData?.[i], [
-                        'CreatedAt',
-                        'UpdatedAt',
-                      ])
+                    ? formatDataForAudit(
+                        removeBlankPropsAndMask(prevData?.[i], [
+                          'CreatedAt',
+                          'UpdatedAt',
+                        ]),
+                        this.model.columns,
+                      )
                     : null,
                   data: d
-                    ? removeBlankPropsAndMask(d, ['CreatedAt', 'UpdatedAt'])
+                    ? formatDataForAudit(
+                        removeBlankPropsAndMask(d, ['CreatedAt', 'UpdatedAt']),
+                        this.model.columns,
+                      )
                     : null,
                   column_meta: extractColsMetaForAudit(
                     this.model.columns,
@@ -7498,8 +7511,8 @@ class BaseModelSqlv2 {
             row_id: id,
           },
           details: {
-            old_data: oldData,
-            data: data,
+            old_data: formatDataForAudit(oldData, this.model.columns),
+            data: formatDataForAudit(data, this.model.columns),
             column_meta: extractColsMetaForAudit(
               this.model.columns,
               data,
@@ -11937,6 +11950,37 @@ function getRelatedLinksColumn(
       );
     }
   });
+}
+
+export function formatDataForAudit(
+  data: Record<string, unknown>,
+  columns: Column[],
+) {
+  if (!data || typeof data !== 'object') return data;
+  const res = { ...data };
+
+  for (const column of columns) {
+    // if multi-select column, convert string to array
+    if (column.uidt === UITypes.MultiSelect) {
+      if (res[column.title] && typeof res[column.title] === 'string') {
+        res[column.title] = (res[column.title] as string).split(',');
+      }
+    }
+    // if attachment then exclude signed url and thumbnail
+    else if (column.uidt === UITypes.Attachment) {
+      if (res[column.title] && Array.isArray(res[column.title])) {
+        try {
+          res[column.title] = (res[column.title] as any[]).map((attachment) =>
+            excludeAttachmentProps(attachment),
+          );
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  return res;
 }
 
 export { BaseModelSqlv2 };

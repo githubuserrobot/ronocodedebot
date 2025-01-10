@@ -7152,7 +7152,7 @@ class BaseModelSqlv2 {
 
       await trx.commit();
 
-      await this.afterBulkDelete(response.length, this.dbDriver, cookie, true);
+      await this.afterBulkDelete(response, this.dbDriver, cookie, true);
 
       return response;
     } catch (e) {

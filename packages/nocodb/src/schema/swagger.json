@@ -28675,7 +28675,8 @@
         "enum": [
           "webhook",
           "url",
-          "ai"
+          "ai",
+          "script"
         ]
       },
       "CustomUrl": {

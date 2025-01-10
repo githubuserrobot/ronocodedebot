@@ -147,10 +147,6 @@ if (isWorkerSupport && process.env.NODE_ENV === 'production') {
   )
 }
 
-const collapseKey = ref('')
-const temporaryJson = ref({})
-const jsonErrorText = ref('')
-
 const isPreImportFileFilled = computed(() => {
   return importState.fileList?.length > 0
 })

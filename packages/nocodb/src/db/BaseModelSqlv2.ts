@@ -7423,6 +7423,8 @@ class BaseModelSqlv2 {
               prev: formattedOldData,
               next: formattedData,
               exclude: ['UpdatedAt'],
+              excludeNull: false,
+              excludeBlanks: false,
             }) as UpdatePayload;
 
             if (updateDiff) {
@@ -7503,6 +7505,8 @@ class BaseModelSqlv2 {
       prev: formattedOldData,
       next: formattedData,
       exclude: ['UpdatedAt'],
+      excludeNull: false,
+      excludeBlanks: false,
     }) as UpdatePayload;
 
     if (updateDiff) {

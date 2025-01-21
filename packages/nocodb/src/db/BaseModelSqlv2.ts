@@ -7426,6 +7426,7 @@ class BaseModelSqlv2 {
               exclude: extractExcludedColumnNames(this.model.columns),
               excludeNull: false,
               excludeBlanks: false,
+              keepNested: true,
             }) as UpdatePayload;
 
             if (updateDiff) {
@@ -7510,6 +7511,7 @@ class BaseModelSqlv2 {
       exclude: extractExcludedColumnNames(this.model.columns),
       excludeNull: false,
       excludeBlanks: false,
+      keepNested: true,
     }) as UpdatePayload;
 
     if (updateDiff) {

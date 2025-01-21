@@ -7988,21 +7988,19 @@ class BaseModelSqlv2 {
               type: colOptions.type as RelationTypes,
             });
 
-            if (parentTable.id !== childTable.id) {
-              auditUpdateObj.push({
-                model: auditConfig.childModel,
-                refModel: auditConfig.parentModel,
-                rowId: childId,
-                refRowId: oldRowId as string,
-                opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                columnTitle: auditConfig.childColTitle,
-                columnId: auditConfig.childColId,
-                displayValue: parentRelatedPkValue,
-                refDisplayValue: childRelatedPkValue,
-                req: cookie,
-                type: getOppositeRelationType(colOptions.type),
-              });
-            }
+            auditUpdateObj.push({
+              model: auditConfig.childModel,
+              refModel: auditConfig.parentModel,
+              rowId: childId,
+              refRowId: oldRowId as string,
+              opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+              columnTitle: auditConfig.childColTitle,
+              columnId: auditConfig.childColId,
+              displayValue: parentRelatedPkValue,
+              refDisplayValue: childRelatedPkValue,
+              req: cookie,
+              type: getOppositeRelationType(colOptions.type),
+            });
           }
 
           await this.execAndParse(
@@ -8065,23 +8063,21 @@ class BaseModelSqlv2 {
                 type: colOptions.type as RelationTypes,
               });
 
-              if (parentTable.id !== childTable.id) {
-                auditUpdateObj.push({
-                  model: auditConfig.childModel,
-                  refModel: auditConfig.parentModel,
-                  rowId: oldChildRowId as string,
-                  refRowId: rowId,
-                  opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                  columnTitle: auditConfig.childColTitle,
-                  columnId: auditConfig.childColId,
-                  displayValue: childRelatedPkValue,
-                  refDisplayValue:
-                    prevData[column.title]?.[parentTable.displayValue.title] ??
-                    null,
-                  req: cookie,
-                  type: getOppositeRelationType(colOptions.type),
-                });
-              }
+              auditUpdateObj.push({
+                model: auditConfig.childModel,
+                refModel: auditConfig.parentModel,
+                rowId: oldChildRowId as string,
+                refRowId: rowId,
+                opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+                columnTitle: auditConfig.childColTitle,
+                columnId: auditConfig.childColId,
+                displayValue: childRelatedPkValue,
+                refDisplayValue:
+                  prevData[column.title]?.[parentTable.displayValue.title] ??
+                  null,
+                req: cookie,
+                type: getOppositeRelationType(colOptions.type),
+              });
             }
             // await triggerAfterRemoveChild();
           } else {
@@ -8124,21 +8120,19 @@ class BaseModelSqlv2 {
                 type: colOptions.type as RelationTypes,
               });
 
-              if (parentTable.id !== childTable.id) {
-                auditUpdateObj.push({
-                  model: auditConfig.childModel,
-                  refModel: auditConfig.parentModel,
-                  rowId: oldChildRowId as string,
-                  refRowId: rowId,
-                  opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                  columnTitle: auditConfig.childColTitle,
-                  columnId: auditConfig.childColId,
-                  refDisplayValue: childRelatedPkValue,
-                  displayValue: parentRelatedPkValue,
-                  req: cookie,
-                  type: getOppositeRelationType(colOptions.type),
-                });
-              }
+              auditUpdateObj.push({
+                model: auditConfig.childModel,
+                refModel: auditConfig.parentModel,
+                rowId: oldChildRowId as string,
+                refRowId: rowId,
+                opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+                columnTitle: auditConfig.childColTitle,
+                columnId: auditConfig.childColId,
+                refDisplayValue: childRelatedPkValue,
+                displayValue: parentRelatedPkValue,
+                req: cookie,
+                type: getOppositeRelationType(colOptions.type),
+              });
             }
 
             await this.execAndParse(
@@ -8217,21 +8211,19 @@ class BaseModelSqlv2 {
                 type: colOptions.type as RelationTypes,
               });
 
-              if (parentTable.id !== childTable.id) {
-                auditUpdateObj.push({
-                  model: auditConfig.childModel,
-                  refModel: auditConfig.parentModel,
-                  rowId: oldChildRowId as string,
-                  refRowId: rowId,
-                  opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                  columnTitle: auditConfig.childColTitle,
-                  columnId: auditConfig.childColId,
-                  displayValue: childRelatedPkValue,
-                  refDisplayValue: parentRelatedPkValue,
-                  req: cookie,
-                  type: getOppositeRelationType(colOptions.type),
-                });
-              }
+              auditUpdateObj.push({
+                model: auditConfig.childModel,
+                refModel: auditConfig.parentModel,
+                rowId: oldChildRowId as string,
+                refRowId: rowId,
+                opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+                columnTitle: auditConfig.childColTitle,
+                columnId: auditConfig.childColId,
+                displayValue: childRelatedPkValue,
+                refDisplayValue: parentRelatedPkValue,
+                req: cookie,
+                type: getOppositeRelationType(colOptions.type),
+              });
             }
 
             // 2. check current child is linked with another row cell
@@ -8278,21 +8270,19 @@ class BaseModelSqlv2 {
                   type: colOptions.type as RelationTypes,
                 });
 
-                if (parentTable.id !== childTable.id) {
-                  auditUpdateObj.push({
-                    model: auditConfig.childModel,
-                    refModel: auditConfig.parentModel,
-                    rowId: childId,
-                    refRowId: oldRowId as string,
-                    opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                    columnTitle: auditConfig.childColTitle,
-                    columnId: auditConfig.childColId,
-                    displayValue: childRelatedPkValue,
-                    refDisplayValue: childRelatedPkValue,
-                    req: cookie,
-                    type: getOppositeRelationType(colOptions.type),
-                  });
-                }
+                auditUpdateObj.push({
+                  model: auditConfig.childModel,
+                  refModel: auditConfig.parentModel,
+                  rowId: childId,
+                  refRowId: oldRowId as string,
+                  opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+                  columnTitle: auditConfig.childColTitle,
+                  columnId: auditConfig.childColId,
+                  displayValue: childRelatedPkValue,
+                  refDisplayValue: childRelatedPkValue,
+                  req: cookie,
+                  type: getOppositeRelationType(colOptions.type),
+                });
               }
             }
           } else {
@@ -8338,21 +8328,19 @@ class BaseModelSqlv2 {
                   type: colOptions.type as RelationTypes,
                 });
 
-                if (parentTable.id !== childTable.id) {
-                  auditUpdateObj.push({
-                    model: auditConfig.childModel,
-                    refModel: auditConfig.parentModel,
-                    rowId: oldChildRowId as string,
-                    refRowId: rowId,
-                    opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                    columnTitle: auditConfig.childColTitle,
-                    columnId: auditConfig.childColId,
-                    displayValue: childRelatedPkValue,
-                    refDisplayValue: parentRelatedPkValue,
-                    req: cookie,
-                    type: getOppositeRelationType(colOptions.type),
-                  });
-                }
+                auditUpdateObj.push({
+                  model: auditConfig.childModel,
+                  refModel: auditConfig.parentModel,
+                  rowId: oldChildRowId as string,
+                  refRowId: rowId,
+                  opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+                  columnTitle: auditConfig.childColTitle,
+                  columnId: auditConfig.childColId,
+                  displayValue: childRelatedPkValue,
+                  refDisplayValue: parentRelatedPkValue,
+                  req: cookie,
+                  type: getOppositeRelationType(colOptions.type),
+                });
               }
             }
 
@@ -8395,21 +8383,19 @@ class BaseModelSqlv2 {
                 type: colOptions.type as RelationTypes,
               });
 
-              if (parentTable.id !== childTable.id) {
-                auditUpdateObj.push({
-                  model: auditConfig.childModel,
-                  refModel: auditConfig.parentModel,
-                  rowId: childId,
-                  refRowId: oldRowId as string,
-                  opSubType: AuditOperationSubTypes.UNLINK_RECORD,
-                  columnTitle: auditConfig.childColTitle,
-                  columnId: auditConfig.childColId,
-                  displayValue: childRelatedPkValue,
-                  refDisplayValue: parentRelatedPkValue,
-                  req: cookie,
-                  type: getOppositeRelationType(colOptions.type),
-                });
-              }
+              auditUpdateObj.push({
+                model: auditConfig.childModel,
+                refModel: auditConfig.parentModel,
+                rowId: childId,
+                refRowId: oldRowId as string,
+                opSubType: AuditOperationSubTypes.UNLINK_RECORD,
+                columnTitle: auditConfig.childColTitle,
+                columnId: auditConfig.childColId,
+                displayValue: childRelatedPkValue,
+                refDisplayValue: parentRelatedPkValue,
+                req: cookie,
+                type: getOppositeRelationType(colOptions.type),
+              });
             }
           }
 
@@ -8473,19 +8459,17 @@ class BaseModelSqlv2 {
       type: colOptions.type as RelationTypes,
     });
 
-    if (parentTable.id !== childTable.id) {
-      auditUpdateObj.push({
-        model: auditConfig.childModel,
-        refModel: auditConfig.parentModel,
-        rowId: childId,
-        refRowId: rowId,
-        opSubType: AuditOperationSubTypes.LINK_RECORD,
-        columnTitle: auditConfig.childColTitle,
-        columnId: auditConfig.childColId,
-        req: cookie,
-        type: getOppositeRelationType(colOptions.type),
-      });
-    }
+    auditUpdateObj.push({
+      model: auditConfig.childModel,
+      refModel: auditConfig.parentModel,
+      rowId: childId,
+      refRowId: rowId,
+      opSubType: AuditOperationSubTypes.LINK_RECORD,
+      columnTitle: auditConfig.childColTitle,
+      columnId: auditConfig.childColId,
+      req: cookie,
+      type: getOppositeRelationType(colOptions.type),
+    });
 
     await Promise.allSettled(
       auditUpdateObj.map((updateObj) => {

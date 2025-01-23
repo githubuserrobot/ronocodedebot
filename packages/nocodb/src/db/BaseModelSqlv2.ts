@@ -304,13 +304,6 @@ class BaseModelSqlv2 {
     } = {},
   ): Promise<any> {
     const qb = this.dbDriver(this.tnPath);
-    console.log(
-      'ONE!',
-      this.tnPath,
-      this.model.table_name,
-      extractOnlyPrimaries,
-      extractOrderColumn,
-    );
     const { ast, dependencyFields, parsedQuery } = await getAst(this.context, {
       query,
       model: this.model,

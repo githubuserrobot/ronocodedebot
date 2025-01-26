@@ -56,6 +56,11 @@ export class InitMigrationJobs {
       job: MigrationJobTypes.RecoverOrderColumnMigration,
       service: isEE ? this.noOpMigration : this.recoverOrderColumnMigration,
     },
+    {
+      version: '8',
+      job: MigrationJobTypes.Thumbnail,
+      service: this.thumbnailMigration,
+    },
   ];
 
   private readonly debugLog = debug('nc:migration-jobs:init');

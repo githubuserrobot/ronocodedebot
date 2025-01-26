@@ -290,29 +290,6 @@ export class ThumbnailMigration {
               'nc/thumbnails',
             );
 
-            try {
-              const thumbnails = await storageAdapter.getDirectoryList(
-                thumbnailRoot,
-              );
-
-              if (
-                ['card_cover.jpg', 'small.jpg', 'tiny.jpg'].every((t) =>
-                  thumbnails.includes(t),
-                )
-              ) {
-                await ncMeta
-                  .knexConnection(temp_file_references_table)
-                  .where('file_path', fileReference.file_path)
-                  .update({
-                    thumbnail_generated: true,
-                  });
-
-                fileReference.thumbnail_generated = true;
-              }
-            } catch (e) {
-              // ignore error
-            }
-
             if (fileReference.thumbnail_generated) {
               this.log("found thumbnail, skipping")
               continue;

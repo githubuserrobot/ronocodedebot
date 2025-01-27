@@ -30,7 +30,7 @@ import { customAlphabet } from 'nanoid';
 import { v4 as uuidv4 } from 'uuid';
 import { Logger } from '@nestjs/common';
 import { NcApiVersion } from 'nocodb-sdk';
-import { UpdateWebhookHandler } from './update-webhook-handler';
+import { RelationUpdateWebhookHandler } from './relation-update-webhook-handler';
 import type {
   BulkAuditV1OperationTypes,
   DataBulkDeletePayload,
@@ -7829,37 +7829,18 @@ class BaseModelSqlv2 {
       model: childTable,
     });
 
-    const prevParentDataForWebhook = await parentBaseModel.readByPk(
-      rowId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    const prevChildDataForWebhook = await childBaseModel.readByPk(
-      childId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    const parentWebhookHandler = await UpdateWebhookHandler.beginUpdate(
+    const webhookHandler = await RelationUpdateWebhookHandler.beginUpdate(
       {
         context: this.context,
-        modelId: parentBaseModel.model.id,
-        tnPath: parentBaseModel.tnPath,
-        user: cookie?.user,
-        viewId: parentBaseModel.viewId,
+        childBaseModel,
+        parentBaseModel,
+        user: cookie.user,
+        ignoreWebhook: cookie.query?.ignoreWebhook,
       },
-      prevParentDataForWebhook,
-    );
-    const childWebhookHandler = await UpdateWebhookHandler.beginUpdate(
       {
-        context: this.context,
-        modelId: childBaseModel.model.id,
-        tnPath: childBaseModel.tnPath,
-        user: cookie?.user,
-        viewId: childBaseModel.viewId,
+        parent: rowId,
+        child: childId,
       },
-      prevChildDataForWebhook,
     );
 
     const childTn = childBaseModel.getTnPath(childTable);
@@ -8555,20 +8536,7 @@ class BaseModelSqlv2 {
       }),
     );
 
-    const nextParentDataForWebhook = await parentBaseModel.readByPk(
-      rowId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    await parentWebhookHandler.finishUpdate(nextParentDataForWebhook);
-    const nextChildDataForWebhook = await childBaseModel.readByPk(
-      childId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    await childWebhookHandler.finishUpdate(nextChildDataForWebhook);
+    await webhookHandler.finishUpdate();
   }
 
   public async afterAddChild({
@@ -8686,37 +8654,18 @@ class BaseModelSqlv2 {
       model: childTable,
     });
 
-    const prevParentDataForWebhook = await parentBaseModel.readByPk(
-      rowId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    const prevChildDataForWebhook = await childBaseModel.readByPk(
-      childId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    const parentWebhookHandler = await UpdateWebhookHandler.beginUpdate(
+    const webhookHandler = await RelationUpdateWebhookHandler.beginUpdate(
       {
         context: this.context,
-        modelId: parentBaseModel.model.id,
-        tnPath: parentBaseModel.tnPath,
-        user: cookie?.user,
-        viewId: parentBaseModel.viewId,
+        childBaseModel,
+        parentBaseModel,
+        user: cookie.user,
+        ignoreWebhook: cookie.query?.ignoreWebhook,
       },
-      prevParentDataForWebhook,
-    );
-    const childWebhookHandler = await UpdateWebhookHandler.beginUpdate(
       {
-        context: this.context,
-        modelId: childBaseModel.model.id,
-        tnPath: childBaseModel.tnPath,
-        user: cookie?.user,
-        viewId: childBaseModel.viewId,
+        parent: rowId,
+        child: childId,
       },
-      prevChildDataForWebhook,
     );
 
     const childTn = childBaseModel.getTnPath(childTable);
@@ -8929,20 +8878,7 @@ class BaseModelSqlv2 {
       }),
     );
 
-    const nextParentDataForWebhook = await parentBaseModel.readByPk(
-      rowId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    await parentWebhookHandler.finishUpdate(nextParentDataForWebhook);
-    const nextChildDataForWebhook = await childBaseModel.readByPk(
-      childId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: false },
-    );
-    await childWebhookHandler.finishUpdate(nextChildDataForWebhook);
+    await webhookHandler.finishUpdate();
   }
 
   public async afterRemoveChild({
@@ -11811,6 +11747,10 @@ class BaseModelSqlv2 {
     req: NcRequest;
   }) {
     // placeholder
+  }
+
+  getViewId() {
+    return this.viewId;
   }
 }
 

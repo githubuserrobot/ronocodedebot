@@ -7806,6 +7806,8 @@ class BaseModelSqlv2 {
     const colOptions = await column.getColOptions<LinkToAnotherRecordColumn>(
       this.context,
     );
+    const isBt =
+      colOptions.type === RelationTypes.BELONGS_TO || column.meta?.bt;
 
     // return if onlyUpdateAuditLogs is true and is not bt column
     if (onlyUpdateAuditLogs && colOptions.type !== RelationTypes.BELONGS_TO) {
@@ -7840,8 +7842,8 @@ class BaseModelSqlv2 {
       {
         // in bt, child id and row id is swapped
         // due to table definition
-        parent: column.meta?.bt ? childId : rowId,
-        child: column.meta?.bt ? rowId : childId,
+        parent: isBt ? childId : rowId,
+        child: isBt ? rowId : childId,
       },
     );
 
@@ -8000,6 +8002,7 @@ class BaseModelSqlv2 {
             : null;
 
           if (oldRowId) {
+            await webhookHandler.addAffectedParentId(oldRowId);
             const [parentRelatedPkValue, childRelatedPkValue] =
               await this.readOnlyPrimariesByPkFromModel([
                 { model: childTable, id: childId },
@@ -8488,8 +8491,8 @@ class BaseModelSqlv2 {
     auditUpdateObj.push({
       model: auditConfig.parentModel,
       refModel: auditConfig.childModel,
-      rowId: column.meta?.isBt ? childId : rowId,
-      refRowId: column.meta?.isBt ? rowId : childId,
+      rowId: isBt ? childId : rowId,
+      refRowId: isBt ? rowId : childId,
       opSubType: AuditOperationSubTypes.LINK_RECORD,
       columnTitle: auditConfig.parentColTitle,
       columnId: auditConfig.parentColId,
@@ -8500,8 +8503,8 @@ class BaseModelSqlv2 {
     auditUpdateObj.push({
       model: auditConfig.childModel,
       refModel: auditConfig.parentModel,
-      rowId: column.meta?.isBt ? rowId : childId,
-      refRowId: column.meta?.isBt ? childId : rowId,
+      rowId: isBt ? rowId : childId,
+      refRowId: isBt ? childId : rowId,
       opSubType: AuditOperationSubTypes.LINK_RECORD,
       columnTitle: auditConfig.childColTitle,
       columnId: auditConfig.childColId,

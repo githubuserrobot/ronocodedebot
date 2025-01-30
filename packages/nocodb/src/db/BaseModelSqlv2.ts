@@ -6664,7 +6664,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipValidationAndHooks?: boolean;
     } = {},
     data,
-    { cookie }: { cookie?: any } = {},
+    { cookie }: { cookie: any },
   ) {
     try {
       let count = 0;
@@ -6944,7 +6944,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   async bulkDeleteAll(
     args: { where?: string; filterArr?: Filter[] } = {},
-    { cookie }: { cookie?: any } = {},
+    { cookie }: { cookie: NcRequest },
   ) {
     let trx: Knex.Transaction;
     try {

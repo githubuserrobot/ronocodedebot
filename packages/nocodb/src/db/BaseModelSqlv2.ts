@@ -6943,7 +6943,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async bulkDeleteAll(
-    args: { where?: string; filterArr?: Filter[] } = {},
+    args: { where?: string; filterArr?: Filter[]; viewId?: string } = {},
     { cookie }: { cookie: NcRequest },
   ) {
     let trx: Knex.Transaction;
@@ -6970,6 +6970,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             is_group: true,
             logical_op: 'and',
           }),
+          ...(args.viewId
+            ? await Filter.rootFilterList(this.context, {
+                viewId: args.viewId,
+              })
+            : []),
         ],
         qb,
         undefined,

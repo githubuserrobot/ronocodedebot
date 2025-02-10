@@ -323,6 +323,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       throwErrorIfInvalidParams,
       extractOnlyPrimaries,
       extractOrderColumn,
+      apiVersion,
     });
 
     await this.selectObject({

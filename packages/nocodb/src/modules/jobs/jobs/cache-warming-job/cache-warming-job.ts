@@ -74,6 +74,7 @@ export class CacheWarmingJob {
       this.logger.log("Starting cache warming")
       var offset = 0
       while (!data.pageInfo.isLastPage) {
+        try {
         data = await this.datasService
           .getDataList(context, {
             model,
@@ -84,6 +85,9 @@ export class CacheWarmingJob {
             ignoreCache: true,
           })
         offset += data.pageInfo.pageSize
+        } catch (error) {
+          this.logger.error(error)
+        }
         await new Promise(r => setTimeout(r, 1000));
       }
       this.logger.log("End cache warming")

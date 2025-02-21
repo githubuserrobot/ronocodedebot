@@ -2579,6 +2579,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       view,
       qb,
       sort,
+      onlySort: true,
     });
 
     // todo: sanitize
@@ -2729,6 +2730,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         qb,
         sort,
         view,
+        onlySort: true,
       });
 
       const children = await this.execAndParse(
@@ -3374,6 +3376,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       qb,
       sort,
       where,
+      onlySort: true,
     });
 
     applyPaginate(qb, rest);
@@ -3465,6 +3468,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       qb,
       sort,
       where,
+      onlySort: true,
     });
 
     applyPaginate(qb, rest);
@@ -3658,6 +3662,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         qb,
         sort,
         where,
+        onlySort: true,
       });
     }
 
@@ -3914,34 +3919,38 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     where,
     qb,
     sort,
+    onlySort = false,
   }: {
     table: Model;
     view?: View;
     where: string;
     qb;
     sort: string;
+    onlySort?: boolean;
   }) {
     const childAliasColMap = await table.getAliasColObjMap(this.context);
 
-    const filter = extractFilterFromXwhere(where, childAliasColMap);
-    await conditionV2(
-      this,
-      [
-        ...(view
-          ? [
-              new Filter({
-                children:
-                  (await Filter.rootFilterList(this.context, {
-                    viewId: view.id,
-                  })) || [],
-                is_group: true,
-              }),
-            ]
-          : []),
-        ...filter,
-      ],
-      qb,
-    );
+    if (!onlySort) {
+      const filter = extractFilterFromXwhere(where, childAliasColMap);
+      await conditionV2(
+        this,
+        [
+          ...(view
+            ? [
+                new Filter({
+                  children:
+                    (await Filter.rootFilterList(this.context, {
+                      viewId: view.id,
+                    })) || [],
+                  is_group: true,
+                }),
+              ]
+            : []),
+          ...filter,
+        ],
+        qb,
+      );
+    }
 
     // First priority View Sort
     if (view) {

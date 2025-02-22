@@ -300,7 +300,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     {
       ignoreView = false,
       getHiddenColumn = false,
-      getSystemColumn = false,
       throwErrorIfInvalidParams = false,
       extractOnlyPrimaries = false,
       apiVersion,
@@ -308,7 +307,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }: {
       ignoreView?: boolean;
       getHiddenColumn?: boolean;
-      getSystemColumn?: boolean;
       throwErrorIfInvalidParams?: boolean;
       extractOnlyPrimaries?: boolean;
       apiVersion?: NcApiVersion;
@@ -323,7 +321,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         ? null
         : this.viewId && (await View.get(this.context, this.viewId)),
       getHiddenColumn,
-      getSystemColumn,
       throwErrorIfInvalidParams,
       extractOnlyPrimaries,
       extractOrderColumn,

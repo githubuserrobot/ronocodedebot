@@ -318,6 +318,8 @@ export default class PresignedUrl {
       }
 
       await Promise.all(promises);
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
   }
 }

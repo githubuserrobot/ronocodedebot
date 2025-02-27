@@ -322,7 +322,6 @@ export default class PresignedUrl {
       await Promise.all(promises);
     } catch (e) {
       logger.error('Error signing meta icon image', e);
-      console.error(e);
     }
   }
 }

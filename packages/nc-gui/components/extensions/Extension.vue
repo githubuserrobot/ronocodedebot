@@ -97,6 +97,10 @@ useEventListener('keydown', (e) => {
     fullscreen.value = false
   }
 })
+
+const noExplicitHeightExtensions = ['nc-data-exporter']
+
+const isNoExplicitHeightExtension = computed(() => noExplicitHeightExtensions.includes(extension.value.extensionId))
 </script>
 
 <template>
@@ -113,7 +117,7 @@ useEventListener('keydown', (e) => {
       :style="
         !collapsed
           ? {
-              height: extensionHeight,
+              height: isNoExplicitHeightExtension ? '100%' : extensionHeight,
               minHeight: extensionManifest?.config?.contentMinHeight,
             }
           : {}

@@ -6122,6 +6122,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           );
         }
 
+        if (!allowSystemColumn && col.readonly) {
+          NcError.badRequest(
+            `Column "${col.title}" is readonly column and cannot be updated`,
+          );
+        }
+
         if (
           col.system &&
           !allowSystemColumn &&
@@ -6464,12 +6470,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       raw = false,
       throwExceptionIfNotExist = false,
       isSingleRecordUpdation = false,
+      allowSystemColumn = false,
       apiVersion,
     }: {
       cookie?: any;
       raw?: boolean;
       throwExceptionIfNotExist?: boolean;
       isSingleRecordUpdation?: boolean;
+      allowSystemColumn?: boolean;
       apiVersion?: NcApiVersion;
     } = {},
   ) {
@@ -6480,7 +6488,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       // validate update data
       if (!raw) {
         for (const d of datas) {
-          await this.validate(d, columns);
+          await this.validate(d, columns, { allowSystemColumn });
         }
       }
 
@@ -6922,6 +6930,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         }
       }
 
+      await this.beforeBulkDelete(deleted, this.dbDriver, cookie);
+
       const execQueries: ((
         trx: Knex.Transaction,
         ids: any[],
@@ -7268,11 +7278,19 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   @trace()
   public async beforeInsert(data: any, _trx: any, req): Promise<void> {
+    if (this.model.synced) {
+      NcError.badRequest('Cannot insert into synced table');
+    }
+
     await this.handleHooks('before.insert', null, data, req);
   }
 
   @trace()
   public async beforeBulkInsert(data: any, _trx: any, req): Promise<void> {
+    if (this.model.synced) {
+      NcError.badRequest('Cannot insert into synced table');
+    }
+
     await this.handleHooks('before.bulkInsert', null, data, req);
   }
 
@@ -7700,7 +7718,17 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   @trace()
   public async beforeDelete(data: any, _trx: any, req): Promise<void> {
+    if (this.model.synced) {
+      NcError.badRequest('Cannot delete from synced table');
+    }
+
     await this.handleHooks('before.delete', null, data, req);
+  }
+
+  public async beforeBulkDelete(_data: any, _trx: any, _req): Promise<void> {
+    if (this.model.synced) {
+      NcError.badRequest('Cannot delete from synced table');
+    }
   }
 
   protected async handleHooks(hookName, prevData, newData, req): Promise<void> {
@@ -7753,8 +7781,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   async validate(
     data: Record<string, any>,
     columns?: Column[],
-    { typecast }: { typecast?: boolean } = {
+    {
+      typecast,
+      allowSystemColumn,
+    }: { typecast?: boolean; allowSystemColumn?: boolean } = {
       typecast: false,
+      allowSystemColumn: false,
     },
   ): Promise<boolean> {
     const cols = columns || (await this.model.getColumns(this.context));
@@ -7773,11 +7805,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         }
 
         if (
+          !allowSystemColumn &&
           column.system &&
           ![UITypes.ForeignKey, UITypes.Order].includes(column.uidt)
         ) {
           NcError.badRequest(
             `Column "${column.title}" is system column and cannot be updated`,
+          );
+        }
+
+        if (!allowSystemColumn && column.readonly) {
+          NcError.badRequest(
+            `Column "${column.title}" is readonly column and cannot be updated`,
           );
         }
       }

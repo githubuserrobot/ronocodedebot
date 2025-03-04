@@ -83,8 +83,6 @@ import {
 import {
   extractExcludedColumnNames,
   getAliasGenerator,
-  isEE,
-  isOnPrem,
   nocoExecute,
   populateUpdatePayloadDiff,
 } from '~/utils';
@@ -117,6 +115,7 @@ import {
   _wherePk,
   getCompositePkValue,
   getOppositeRelationType,
+  isDataAuditEnabled as isDataAuditEnabledFn,
 } from '~/helpers/dbHelpers';
 
 dayjs.extend(utc);
@@ -11114,12 +11113,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async isDataAuditEnabled() {
-    return (
-      process.env.NC_DISABLE_AUDIT !== 'true' &&
-      (process.env.NC_ENABLE_AUDIT === 'true' ||
-        process.env.NODE_ENV === 'test' ||
-        !(isEE && !isOnPrem && !(await this.getSource())?.isMeta()))
-    );
+    return isDataAuditEnabledFn({
+      isMeta: (await this.getSource())?.isMeta(),
+    }) as boolean;
   }
 
   getViewId() {

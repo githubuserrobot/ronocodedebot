@@ -7338,7 +7338,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               ...this.context,
               source_id: this.model.source_id,
               fk_model_id: this.model.id,
-              row_id: id,
+              row_id: this.extractPksValues(id, true),
             },
             details: {
               data: formatDataForAudit(filteredAuditData, this.model.columns),
@@ -7445,7 +7445,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               ...this.context,
               source_id: this.model.source_id,
               fk_model_id: this.model.id,
-              row_id: id,
+              row_id: this.extractPksValues(id, true),
             },
             req,
           },
@@ -7759,6 +7759,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   // todo: handle composite primary key
   public extractPksValues(data: any, asString = false) {
+    // if data is not object return as it is
+    if (!data || typeof data !== 'object') return data;
+
     // data can be still inserted without PK
 
     // if composite primary key return an object with all the primary keys
@@ -8127,7 +8130,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             ...this.context,
             source_id: model.source_id,
             fk_model_id: model.id,
-            row_id: rowId as string,
+            row_id: this.extractPksValues(rowId, true) as string,
           },
           details: {
             table_title: model.title,
@@ -8253,7 +8256,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             ...this.context,
             source_id: model.source_id,
             fk_model_id: model.id,
-            row_id: rowId as string,
+            row_id: this.extractPksValues(rowId, true) as string,
           },
           details: {
             table_title: model.title,

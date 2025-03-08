@@ -454,8 +454,6 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
           offset = 0
         }
 
-        console.log('load data', isNewRow?.value || !rowId.value)
-
         if (isNewRow?.value || !rowId.value) {
           const colTitle = column.value?.title || ''
           const rawList = newRowState.state?.[colTitle] ?? []

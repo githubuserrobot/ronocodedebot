@@ -1039,10 +1039,6 @@ const parseConditionV2 = async (
                   qb = qb.where(
                     knex.raw('??::jsonb::text NOT ILIKE ?', [field, val]),
                   );
-                } else if (knex.clientType().startsWith('mysql')) {
-                  qb = qb.whereNot(field, 'like', val);
-                } else if (knex.clientType() === 'sqlite3') {
-                  qb = qb.whereNot(field, 'like', val);
                 } else {
                   qb = qb.whereNot(field, 'like', val);
                 }
@@ -1408,12 +1404,10 @@ const parseConditionV2 = async (
                   .whereNotNull(field)
                   .whereNot(knex.raw("??::jsonb = '{}'::jsonb", [field]))
                   .whereNot(knex.raw("??::jsonb = '[]'::jsonb", [field]));
-              } else if (knex.clientType().startsWith('mysql')) {
-                qb = qb
-                  .whereNotNull(field)
-                  .whereNot(field, '{}')
-                  .whereNot(field, '[]');
-              } else if (knex.clientType() === 'sqlite3') {
+              } else if (
+                knex.clientType().startsWith('mysql') ||
+                knex.clientType() === 'sqlite3'
+              ) {
                 qb = qb
                   .whereNotNull(field)
                   .whereNot(field, '{}')

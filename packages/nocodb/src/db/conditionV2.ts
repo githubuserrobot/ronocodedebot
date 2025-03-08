@@ -28,6 +28,7 @@ import { getAliasGenerator } from '~/utils';
 import { getRefColumnIfAlias } from '~/helpers';
 import { type BarcodeColumn, BaseUser, type QrCodeColumn } from '~/models';
 import { trace } from '~/tracing/decorator'
+import { validateAndStringifyJson } from '~/utils/tsUtils';
 
 // tod: tobe fixed
 // extend(customParseFormat);
@@ -762,20 +763,6 @@ const parseConditionV2 = async (
                       .orWhere(knex.raw("??::jsonb = '[]'::jsonb", [field]))
                       .orWhereNull(field);
                   });
-                } else if (knex.clientType().startsWith('mysql')) {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb
-                      .where(field, '{}')
-                      .orWhere(field, '[]')
-                      .orWhereNull(field);
-                  });
-                } else if (knex.clientType() === 'sqlite3') {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb
-                      .where(field, '{}')
-                      .orWhere(field, '[]')
-                      .orWhereNull(field);
-                  });
                 } else {
                   qb = qb.where((nestedQb) => {
                     nestedQb
@@ -785,21 +772,7 @@ const parseConditionV2 = async (
                   });
                 }
               } else {
-                let jsonVal = val;
-                let isValidJson = false;
-                if (typeof val === 'object' && val !== null) {
-                  jsonVal = JSON.stringify(val); // Convert object to JSON string
-                  isValidJson = true;
-                } else if (typeof val === 'string') {
-                  try {
-                    JSON.parse(val); // Test if it's valid stringified JSON
-                    jsonVal = val;
-                    isValidJson = true;
-                  } catch (e) {
-                    jsonVal = val; // Keep as string for text comparison
-                    isValidJson = false;
-                  }
-                }
+                const { jsonVal, isValidJson } = validateAndStringifyJson(val);
                 if (knex.clientType() === 'pg') {
                   qb = qb.where((nestedQb) => {
                     if (isValidJson) {
@@ -813,14 +786,6 @@ const parseConditionV2 = async (
                         knex.raw('??::text = ?', [field, jsonVal]),
                       );
                     }
-                  });
-                } else if (knex.clientType().startsWith('mysql')) {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb.where(field, jsonVal);
-                  });
-                } else if (knex.clientType() === 'sqlite3') {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb.where(field, jsonVal);
                   });
                 } else {
                   qb = qb.where((nestedQb) => {
@@ -939,12 +904,10 @@ const parseConditionV2 = async (
                       .whereNot(knex.raw("??::jsonb = '[]'::jsonb", [field]));
                     nestedQb.orWhereNull(field);
                   });
-                } else if (knex.clientType().startsWith('mysql')) {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb.whereNot(field, '{}').whereNot(field, '[]');
-                    nestedQb.orWhereNull(field);
-                  });
-                } else if (knex.clientType() === 'sqlite3') {
+                } else if (
+                  knex.clientType().startsWith('mysql') ||
+                  knex.clientType() === 'sqlite3'
+                ) {
                   qb = qb.where((nestedQb) => {
                     nestedQb.whereNot(field, '{}').whereNot(field, '[]');
                     nestedQb.orWhereNull(field);
@@ -953,22 +916,7 @@ const parseConditionV2 = async (
                   qb = qb.whereNotNull(field).orWhereNull(field);
                 }
               } else {
-                let jsonVal = val;
-                // First, determine if val is valid JSON
-                let isValidJson = false;
-                if (typeof val === 'object' && val !== null) {
-                  jsonVal = JSON.stringify(val); // Convert object to JSON string
-                  isValidJson = true;
-                } else if (typeof val === 'string') {
-                  try {
-                    JSON.parse(val); // Test if it's valid stringified JSON
-                    jsonVal = val;
-                    isValidJson = true;
-                  } catch (e) {
-                    jsonVal = val; // Keep as string for text comparison
-                    isValidJson = false;
-                  }
-                }
+                const { jsonVal, isValidJson } = validateAndStringifyJson(val);
                 if (knex.clientType() === 'pg') {
                   qb = qb.where((nestedQb) => {
                     if (isValidJson) {
@@ -983,16 +931,6 @@ const parseConditionV2 = async (
                         .where(knex.raw('??::text != ?', [field, jsonVal]))
                         .orWhereNull(field);
                     }
-                  });
-                } else if (knex.clientType().startsWith('mysql')) {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb.whereNot(field, jsonVal);
-                    nestedQb.orWhereNull(field);
-                  });
-                } else if (knex.clientType() === 'sqlite3') {
-                  qb = qb.where((nestedQb) => {
-                    nestedQb.whereNot(field, jsonVal);
-                    nestedQb.orWhereNull(field);
                   });
                 } else {
                   qb = qb.where((nestedQb) => {

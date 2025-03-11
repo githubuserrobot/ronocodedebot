@@ -11187,9 +11187,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async isDataAuditEnabled() {
-    return isDataAuditEnabledFn({
-      isMetaSource: !!(await this.getSource())?.isMeta(),
-    }) as boolean;
+    return isDataAuditEnabledFn() as boolean;
   }
 
   getViewId() {

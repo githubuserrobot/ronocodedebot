@@ -2611,7 +2611,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       view,
       qb,
       sort,
-      onlySort: true,
     });
 
     if (!sort || sort === '') {
@@ -2764,7 +2763,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         qb,
         sort,
         view,
-        onlySort: true,
       });
 
       const children = await this.execAndParse(

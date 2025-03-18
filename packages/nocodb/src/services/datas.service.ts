@@ -33,6 +33,7 @@ export class DatasService {
       limitOverride?: number;
       throwErrorIfInvalidParams?: boolean;
       getHiddenColumns?: boolean;
+      includeSortAndFilteredColumns?: boolean;
       apiVersion?: NcApiVersion;
     },
   ) {
@@ -77,6 +78,7 @@ export class DatasService {
       limitOverride: param.limitOverride,
       getHiddenColumns: param.getHiddenColumns,
       apiVersion: param.apiVersion,
+      includeSortAndFilteredColumns: param.includeSortAndFilteredColumns,
     });
   }
 
@@ -212,6 +214,7 @@ export class DatasService {
       ignoreCache?: boolean;
       getHiddenColumns?: boolean;
       apiVersion?: NcApiVersion;
+      includeSortAndFilteredColumns?: boolean;
     },
   ) {
     const {
@@ -219,6 +222,7 @@ export class DatasService {
       view: view,
       query = {},
       ignoreViewFilterAndSort = false,
+      includeSortAndFilteredColumns = false,
       apiVersion,
     } = param;
 
@@ -240,6 +244,7 @@ export class DatasService {
       throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
       getHiddenColumn: param.getHiddenColumns,
       apiVersion,
+      includeSortAndFilteredColumns: includeSortAndFilteredColumns,
     });
 
     const listArgs: any = dependencyFields;

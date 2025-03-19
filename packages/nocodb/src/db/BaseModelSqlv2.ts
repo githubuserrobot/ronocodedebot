@@ -455,6 +455,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
     const sorts = extractSortsObject(rest?.sort, aliasColObjMap);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -563,6 +564,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       throwErrorIfInvalidParams,
     );
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
       throwErrorIfInvalidParams,
@@ -721,6 +723,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       columns,
     );
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
       throwErrorIfInvalidParams,
@@ -839,6 +842,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
 
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -904,6 +908,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
         const getAlias = getAliasGenerator('__nc_gb');
         const { filters: groupFilter } = extractFilterFromXwhere(
+          this.context,
           f.where,
           aliasColObjMap,
         );
@@ -1094,7 +1099,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               logical_op: 'and',
             }),
             new Filter({
-              children: extractFilterFromXwhere(where, aliasColObjMap).filters,
+              children: extractFilterFromXwhere(
+                this.context,
+                where,
+                aliasColObjMap,
+              ).filters,
               is_group: true,
               logical_op: 'and',
             }),
@@ -1210,6 +1219,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
         const getAlias = getAliasGenerator('__nc_gb');
         const { filters: groupFilter } = extractFilterFromXwhere(
+          this.context,
           f?.where,
           aliasColObjMap,
         );
@@ -1413,7 +1423,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               logical_op: 'and',
             }),
             new Filter({
-              children: extractFilterFromXwhere(where, aliasColObjMap).filters,
+              children: extractFilterFromXwhere(
+                this.context,
+                where,
+                aliasColObjMap,
+              ).filters,
               is_group: true,
               logical_op: 'and',
             }),
@@ -1648,6 +1662,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       for (const f of bulkFilterList) {
         const tQb = this.dbDriver(this.tnPath);
         const { filters: aggFilter } = extractFilterFromXwhere(
+          this.context,
           f.where,
           aliasColObjMap,
         );
@@ -1673,7 +1688,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               logical_op: 'and',
             }),
             new Filter({
-              children: extractFilterFromXwhere(where, aliasColObjMap).filters,
+              children: extractFilterFromXwhere(
+                this.context,
+                where,
+                aliasColObjMap,
+              ).filters,
               is_group: true,
               logical_op: 'and',
             }),
@@ -1795,6 +1814,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
       // Apply filers from view configuration, filterArr and where parameter
       const { filters: filterObj } = extractFilterFromXwhere(
+        this.context,
         where,
         aliasColObjMap,
       );
@@ -2081,6 +2101,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     let sorts = extractSortsObject(rest?.sort, aliasColObjMap);
 
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -2379,6 +2400,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
 
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -2824,6 +2846,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         );
       const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
       const { filters: filterObj } = extractFilterFromXwhere(
+        this.context,
         where,
         aliasColObjMap,
       );
@@ -3147,6 +3170,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3291,6 +3315,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       );
     const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3403,6 +3428,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3499,6 +3525,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3584,6 +3611,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3685,6 +3713,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       : childTable
     ).getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3771,6 +3800,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     const aliasColObjMap = await parentTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3855,6 +3885,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     ).getAliasColObjMap(this.context);
 
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3925,6 +3956,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     const aliasColObjMap = await parentTable.getAliasColObjMap(this.context);
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
     );
@@ -3984,6 +4016,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     if (!onlySort) {
       const { filters: filter } = extractFilterFromXwhere(
+        this.context,
         where,
         childAliasColMap,
       );
@@ -6511,6 +6544,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           columns,
         );
         const { filters: filterObj } = extractFilterFromXwhere(
+          this.context,
           where,
           aliasColObjMap,
           true,
@@ -6772,6 +6806,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         columns,
       );
       const { filters: filterObj } = extractFilterFromXwhere(
+        this.context,
         where,
         aliasColObjMap,
         true,
@@ -8072,6 +8107,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       );
       let sorts = extractSortsObject(args?.sort, aliasColObjMap);
       const { filters: filterObj } = extractFilterFromXwhere(
+        this.context,
         where,
         aliasColObjMap,
       );
@@ -8234,6 +8270,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       columns,
     );
     const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       args.where,
       aliasColObjMap,
     );

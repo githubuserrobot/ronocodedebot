@@ -4077,7 +4077,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     const qb = await formulaQueryBuilderv2(
       this,
       formula.formula,
-      null,
       this.model,
       column,
       aliasToColumnBuilder,

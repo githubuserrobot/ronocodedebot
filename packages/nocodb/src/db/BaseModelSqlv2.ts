@@ -9535,4 +9535,4 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 }
 
-export { BaseModelSqlv2 };
+export { BaseModelSqlv2, getAs };

@@ -33,7 +33,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import Validator from 'validator';
 import { NestedLinkPreparator } from './BaseModelSqlv2/nested-link-preparator';
-import { relationListAndCount } from './BaseModelSqlv2/relation-list-and-count';
+import { relationDataFetcher } from './BaseModelSqlv2/relation-data-fetcher';
 import type { Knex } from 'knex';
 import type {
   BulkAuditV1OperationTypes,
@@ -2343,7 +2343,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
-    return relationListAndCount({ baseModel: this, logger }).multipleHmList(
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
       param,
       args,
     );
@@ -2360,7 +2360,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
     selectAllRecords = false,
   ) {
-    return relationListAndCount({ baseModel: this, logger }).mmList(
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
       param,
       args,
       selectAllRecords,
@@ -2368,7 +2368,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async multipleHmListCount({ colId, ids }) {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).multipleHmListCount({
@@ -2386,14 +2386,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     },
     args: { limit?; offset?; fieldSet?: Set<string> } = {},
   ) {
-    return relationListAndCount({ baseModel: this, logger }).hmList(
-      param,
-      args,
-    );
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
   }
 
   async hmListCount({ colId, id }, args) {
-    return relationListAndCount({ baseModel: this, logger }).hmListCount(
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
       { colId, id },
       args,
     );
@@ -2504,14 +2501,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
-    return relationListAndCount({ baseModel: this, logger }).multipleMmList(
+    return relationDataFetcher({ baseModel: this, logger }).multipleMmList(
       param,
       args,
     );
   }
 
   public async multipleMmListCount({ colId, parentIds }) {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).multipleMmListCount({
@@ -2521,7 +2518,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   public async mmListCount({ colId, parentId }, args) {
-    return relationListAndCount({ baseModel: this, logger }).mmListCount(
+    return relationDataFetcher({ baseModel: this, logger }).mmListCount(
       { colId, parentId },
       args,
     );
@@ -2535,7 +2532,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, pid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getMmChildrenExcludedListCount({ colId, pid }, args);
@@ -2547,7 +2544,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, pid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getMmChildrenExcludedList({ colId, pid }, args);
@@ -2559,7 +2556,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, pid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getHmChildrenExcludedList({ colId, pid }, args);
@@ -2571,7 +2568,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, pid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getHmChildrenExcludedListCount({ colId, pid }, args);
@@ -2583,7 +2580,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, cid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getExcludedOneToOneChildrenList({ colId, cid }, args);
@@ -2595,7 +2592,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, cid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getBtChildrenExcludedListCount({ colId, cid }, args);
@@ -2607,7 +2604,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, cid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).countExcludedOneToOneChildren({ colId, cid }, args);
@@ -2619,7 +2616,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     { colId, cid = null },
     args,
   ): Promise<any> {
-    return relationListAndCount({
+    return relationDataFetcher({
       baseModel: this,
       logger,
     }).getBtChildrenExcludedList({ colId, cid }, args);

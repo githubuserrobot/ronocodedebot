@@ -1019,7 +1019,7 @@ export class DatasService {
   ) {
     const base = await Base.getWithInfoByTitleOrId(
       context,
-      req.params.baseName,
+      req.params.baseId ?? req.params.baseName,
     );
 
     const model = await Model.getByAliasOrId(context, {

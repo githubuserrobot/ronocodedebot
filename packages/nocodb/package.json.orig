@@ -70,6 +70,24 @@
     "@nestjs/throttler": "^6.4.0",
     "@nestjs/websockets": "^10.4.15",
     "@ntegral/nestjs-sentry": "^4.0.1",
+<<<<<<< HEAD
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.53.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.55.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
+    "@opentelemetry/instrumentation": "^0.55.0",
+    "@opentelemetry/instrumentation-nestjs-core": "^0.42.0",
+    "@opentelemetry/resources": "1.28.0",
+    "@opentelemetry/sdk-node": "^0.55.0",
+    "@opentelemetry/sdk-trace-base": "1.28.0",
+    "@opentelemetry/semantic-conventions": "1.28.0",
+    "@react-email/components": "^0.0.33",
+    "@react-email/render": "^1.0.5",
+||||||| parent of e9abab84b7 (Move code around)
+    "@react-email/components": "^0.0.33",
+    "@react-email/render": "^1.0.5",
+=======
+>>>>>>> e9abab84b7 (Move code around)
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.53.0",
     "@opentelemetry/exporter-trace-otlp-grpc": "^0.55.0",

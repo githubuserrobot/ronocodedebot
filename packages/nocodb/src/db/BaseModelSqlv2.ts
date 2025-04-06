@@ -156,6 +156,17 @@ export async function populatePk(
     insertObj[pkCol.title] =
       pkCol.meta?.ag === 'nc' ? `rc_${nanoidv2()}` : uuidv4();
   }
+
+/**
+ * Base class for models
+ *
+ * @class
+ * @classdesc Base class for models
+ */
+class BaseModelSqlv2 implements IBaseModelSqlV2 {
+  protected _dbDriver: XKnex;
+  protected viewId: string;
+  protected _proto: any;
   protected _columns = {};
   protected source: Source;
   public model: Model;
@@ -198,7 +209,7 @@ export async function populatePk(
       colId: string;
       parentIds: any[];
     },
-    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean, apiVersion?: NcApiVersion } = {},
   ) {
     // skip duplicate id
     const parentIds = [...new Set(_parentIds)];
@@ -264,7 +275,7 @@ export async function populatePk(
     const children = await this.execAndParse(
       finalQb,
       await childTable.getColumns(this.context),
-      {ignoreCache: args.ignoreCache ?? false},
+      {ignoreCache: args.ignoreCache ?? false, apiVersion: args.apiVersion},
     );
   
     const proto = await (
@@ -287,7 +298,7 @@ export async function populatePk(
   @trace()
   public async multipleHmListFast(
     { colId, ids: _ids }: { colId: string; ids: any[] },
-    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean, apiVersion?: NcApiVersion } = {},
   ) {
     try {
       // skip duplicate id
@@ -355,7 +366,10 @@ export async function populatePk(
       const children = await this.execAndParse(
         childQb,
         await childTable.getColumns(this.context), 
-        {ignoreCache: args.ignoreCache ?? false}
+        {
+          ignoreCache: args.ignoreCache ?? false,
+          apiVersion: args.apiVersion
+        }
       );
       const proto = await (
         await Model.getBaseModelSQL(this.context, {
@@ -377,7 +391,6 @@ export async function populatePk(
   }
 
   @trace()
->>>>>>> 623be30853 (Move code around)
   public async readByPk(
     id?: any,
     validateFormula = false,
@@ -1831,315 +1844,6 @@ export async function populatePk(
     );
   }
 
-||||||| parent of 13b229072c (Add traces for list calls)
-  public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      ids: any[];
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
-      param,
-      args,
-    );
-  }
-
-  @trace()
-  public async mmList(
-    param: {
-      colId: string;
-      parentId: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-    selectAllRecords = false,
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).mmList(
-      param,
-      args,
-      selectAllRecords,
-    );
-  }
-
-  async multipleHmListCount({ colId, ids }) {
-    return relationDataFetcher({
-      baseModel: this,
-      logger,
-    }).multipleHmListCount({
-      colId,
-      ids,
-    });
-  }
-
-  async hmList(
-    param: {
-      colId: string;
-      id: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
-  }
-
-  async hmListCount({ colId, id }, args) {
-    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
-      { colId, id },
-      args,
-    );
-  }
-
-  @trace()
-  public async multipleMmListFast(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      parentIds: any[];
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
-  ) {
-    // skip duplicate id
-    const parentIds = [...new Set(_parentIds)];
-    const { where, sort, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-    const mmTable = await relColOptions.getMMModel(this.context);
-
-    // if mm table is not present then return
-    if (!mmTable) {
-      return;
-    }
-
-    const vtn = this.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-
-    await parentTable.getColumns(this.context);
-    await childTable.getColumns(this.context)
-
-    const columnName = childTable.displayValue.column_name
-    const qb = this.dbDriver()
-
-    const childModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-    await childModel.selectObject({ qb, fieldsSet: args.fieldsSet });
-
-    await this.applySortAndFilter({
-      table: childTable,
-      where,
-      qb,
-      sort,
-    });
-
-    var finalQb = qb
-      .with("filteredM2m", function () {
-        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
-      })
-      .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${GROUP_COL}`)
-      .from("filteredM2m")
-      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
-
-    const rtnId = childTable.id;
-
-    const children = await this.execAndParse(
-      finalQb,
-      await childTable.getColumns(this.context),
-      {ignoreCache: args.ignoreCache ?? false},
-    );
-
-    const proto = await (
-      await Model.getBaseModelSQL(this.context, {
-        id: rtnId,
-        dbDriver: this.dbDriver,
-      })
-    ).getProto();
-    
-    const gs = groupBy(
-      children.map((c) => {
-        c.__proto__ = proto;
-        return c;
-      }),
-      GROUP_COL,
-    );
-    return _parentIds.map((id) => gs[id] || []);
-  }
-
-  @trace()
-=======
-  @trace()
-  public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      ids: any[];
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
-      param,
-      args,
-    );
-  }
-
-  public async mmList(
-    param: {
-      colId: string;
-      parentId: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-    selectAllRecords = false,
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).mmList(
-      param,
-      args,
-      selectAllRecords,
-    );
-  }
-
-  async multipleHmListCount({ colId, ids }) {
-    return relationDataFetcher({
-      baseModel: this,
-      logger,
-    }).multipleHmListCount({
-      colId,
-      ids,
-    });
-  }
-
-  async hmList(
-    param: {
-      colId: string;
-      id: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
-  }
-
-  async hmListCount({ colId, id }, args) {
-    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
-      { colId, id },
-      args,
-    );
-  }
-
-  public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      ids: any[];
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
-      param,
-      args,
-    );
-  }
-
-  public async mmList(
-    param: {
-      colId: string;
-      parentId: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-    selectAllRecords = false,
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).mmList(
-      param,
-      args,
-      selectAllRecords,
-    );
-  }
-
-  async multipleHmListCount({ colId, ids }) {
-    return relationDataFetcher({
-      baseModel: this,
-      logger,
-    }).multipleHmListCount({
-      colId,
-      ids,
-    });
-  }
-
-  async hmList(
-    param: {
-      colId: string;
-      id: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
-  }
-
-  async hmListCount({ colId, id }, args) {
-    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
-      { colId, id },
-      args,
-    );
-  }
-
-  public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      ids: any[];
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
-      param,
-      args,
-    );
-  }
 
   public async mmList(
     param: {
@@ -2465,16 +2169,13 @@ export async function populatePk(
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
                     var args = (listLoader as any).args
-                    if (options != null ){
-                      args["ignoreCache"] = options.ignoreCache ?? false
-                    }
+                    args["ignoreCache"] = ignoreCache 
+                    args["apiVersion"] = apiVersion
                     if (ids.length > 1) {
                       const data = await this.multipleHmListFast(
                         {
                           colId: column.id,
                           ids,
-                          apiVersion,
-                          columnName: column.title,
                         },
                         (listLoader as any).args,
                       );
@@ -2515,16 +2216,13 @@ export async function populatePk(
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
                     var args = (listLoader as any).args ?? []
-                    if (options != null) {
-                      args["ignoreCache"] = options.ignoreCache ?? false
-                    }
+                    args["ignoreCache"] = ignoreCache 
+                    args["apiVersion"] = apiVersion
                     if (ids?.length > 1) {
                       const data = await this.multipleMmList(
                         {
                           parentIds: ids,
                           colId: column.id,
-                          apiVersion,
-                          nested: true,
                         },
                         (listLoader as any).args,
                       );

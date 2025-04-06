@@ -183,18 +183,6 @@ export default async function ({
     }
 
     case RelationTypes.MANY_TO_MANY: {
-      if (columnOptions instanceof LinksColumn) {
-        try {
-          const qb = knex("nc_tdo8___Obstructions").select(1).first()
-          return {
-            builder: qb,
-          };
-        } catch (error) {
-          console.trace(error)
-          throw error
-        }
-      }
-
       const mmModel = await relationColumnOption.getMMModel(context);
       const mmChildCol = await relationColumnOption.getMMChildColumn(context);
       const assocBaseModel = await Model.getBaseModelSQL(context, {

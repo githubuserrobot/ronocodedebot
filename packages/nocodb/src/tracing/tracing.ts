@@ -1,7 +1,3 @@
-import {
-  BatchSpanProcessor,
-  SimpleSpanProcessor,
-} from '@opentelemetry/sdk-trace-base';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import process from 'process';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
@@ -11,6 +7,7 @@ import { Resource } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import * as dotenv from 'dotenv';
+import { tracing } from '@opentelemetry/sdk-node';
 
 
 const collectorOptions = {
@@ -21,8 +18,8 @@ const traceExporter = new OTLPTraceExporter(collectorOptions);
 
 const spanProcessor =
   process.env.NODE_ENV === `development`
-    ? new SimpleSpanProcessor(traceExporter)
-    : new BatchSpanProcessor(traceExporter);
+    ? new tracing.SimpleSpanProcessor(traceExporter)
+    : new tracing.BatchSpanProcessor(traceExporter);
 
 export const otelSDK = new NodeSDK({
   resource: new Resource({

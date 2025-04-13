@@ -14,6 +14,88 @@ import { Column, Model } from '~/models';
 import formulaQueryBuilderv2 from '~/db/formulav2/formulaQueryBuilderv2';
 import { extractLinkRelFiltersAndApply } from '~/db/conditionV2';
 
+async function handleManyToManyRollup({
+  context,
+  relationColumnOption,
+  parentBaseModel,
+  childBaseModel,
+  parentModel,
+  childModel,
+  parentCol,
+  childCol,
+  columnOptions,
+  refTableAlias,
+  alias,
+  knex,
+  applyFunction
+}: {
+  context: any;
+  relationColumnOption: LinkToAnotherRecordColumn;
+  parentBaseModel: any;
+  childBaseModel: any;
+  parentModel: any;
+  childModel: any;
+  parentCol: any;
+  childCol: any;
+  columnOptions: RollupColumn | LinksColumn;
+  refTableAlias: string;
+  alias?: string;
+  knex: XKnex;
+  applyFunction: (qb: any) => Promise<void>;
+}): Promise<{ builder: Knex.QueryBuilder | any }> {
+  const mmModel = await relationColumnOption.getMMModel(context);
+  const mmChildCol = await relationColumnOption.getMMChildColumn(context);
+  const assocBaseModel = await Model.getBaseModelSQL(context, {
+    id: mmModel.id,
+    dbDriver: knex,
+  });
+  if (!mmModel) {
+    return this.dbDriver.raw(`?`, [
+      NcDataErrorCodes.NC_ERR_MM_MODEL_NOT_FOUND,
+    ]);
+  }
+  const prejoined = "prejoined";
+  const qb = knex(refTableAlias
+  ).select("total").withMaterialized(refTableAlias, knex(knex.raw(`?? as ??`, [
+    parentBaseModel.getTnPath(parentModel?.table_name),
+    prejoined,
+  ]))
+    .select(knex.ref(
+      `${assocBaseModel.getTnPath(mmModel.table_name)}.${mmChildCol.column_name
+      }`,
+    ))
+    [columnOptions.rollup_function as string](`${prejoined}.${childCol.column_name} as total`)
+    .innerJoin(
+      assocBaseModel.getTnPath(mmModel.table_name) as any,
+      knex.ref(
+        `${assocBaseModel.getTnPath(mmModel.table_name)}.${mmChildCol.column_name
+        }`,
+      ) as any,
+      '=',
+      knex.ref(`${prejoined}.${parentCol.column_name}`) as any,
+    ).groupBy(knex.ref(
+      `${assocBaseModel.getTnPath(mmModel.table_name)}.${mmChildCol.column_name
+      }`,
+    )))
+    .where(
+      knex.ref(
+        `${refTableAlias}.${mmChildCol.column_name
+        }`,
+      ),
+      '=',
+      knex.ref(
+        `${alias || childBaseModel.getTnPath(childModel.table_name)}.${childCol.column_name
+        }`,
+      ),
+    );
+
+  await applyFunction(qb);
+
+  return {
+    builder: qb,
+  };
+}
+
 export default async function ({
   baseModelSqlv2,
   knex,

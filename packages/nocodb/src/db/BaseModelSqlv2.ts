@@ -264,11 +264,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   
     var finalQb = qb
       .with("filteredM2m", function () {
-        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`).from(mmTable.table_name).whereIn(`${vtn}.${vcn}`, parentIds)
+        this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`)
+            .from(mmTable.table_name)
+            .whereIn(`${vtn}.${vcn}`, parentIds)
       })
       .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${this.GROUP_COL}`)
       .from("filteredM2m")
-      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`).distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`)
+      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`)
+      .distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`, `${childTable.table_name}.nc_order`)
+      .orderBy([
+        { column: `filteredM2m.${vcn}`, order: 'asc' },
+        { column: `${childTable.table_name}.${columnName}`, order: 'asc' },
+      ])
   
     const rtnId = childTable.id;
   
@@ -2219,15 +2226,23 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                     args["ignoreCache"] = ignoreCache 
                     args["apiVersion"] = apiVersion
                     if (ids?.length > 1) {
-                      const data = await this.multipleMmList(
-                        {
-                          parentIds: ids,
-                          colId: column.id,
-                        },
-                        (listLoader as any).args,
-                      );
-
-                      return data;
+                      if (true) {
+                        return await this.multipleMmListFast(
+                          {
+                            parentIds: ids,
+                            colId: column.id,
+                          },
+                          (listLoader as any).args,
+                        );
+                      } else {
+                        return await this.multipleMmList(
+                          {
+                            parentIds: ids,
+                            colId: column.id,
+                          },
+                          (listLoader as any).args,
+                        );
+                      }
                     } else {
                       return [
                         await this.mmList(

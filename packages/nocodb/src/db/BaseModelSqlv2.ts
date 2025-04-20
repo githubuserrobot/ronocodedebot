@@ -249,20 +249,20 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       qb,
       sort,
     });
-  
+    const childTableName = `${childTable.base_id}.${childTable.table_name}`
     var finalQb = qb
       .with("filteredM2m", function () {
         this.select(`${vtn}.${vrcn}`, `${vtn}.${vcn}`)
-            .from(mmTable.table_name)
+            .from(`${vtn}`)
             .whereIn(`${vtn}.${vcn}`, parentIds)
       })
       .select(`filteredM2m.${vrcn}`, `filteredM2m.${vcn} as ${this.GROUP_COL}`)
       .from("filteredM2m")
-      .join(childTable.table_name, cn, `filteredM2m.${vrcn}`)
-      .distinctOn(`filteredM2m.${vcn}`, `${childTable.table_name}.${columnName}`, `${childTable.table_name}.nc_order`)
+      .join(childTableName, cn, `filteredM2m.${vrcn}`)
+      .distinctOn(`filteredM2m.${vcn}`, `${childTableName}.${columnName}`, `${childTableName}.nc_order`)
       .orderBy([
         { column: `filteredM2m.${vcn}`, order: 'asc' },
-        { column: `${childTable.table_name}.${columnName}`, order: 'asc' },
+        { column: `${childTableName}.${columnName}`, order: 'asc' },
       ])
   
     const rtnId = childTable.id;
@@ -774,7 +774,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     let data;
     try {
       data = await this.execAndParse(qb, undefined, {
-        gnoreCache: options.ignoreCache ?? false,
         apiVersion: args.apiVersion,
         ignoreCache: options.ignoreCache ?? false
       });
@@ -7659,7 +7658,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
-  @trace()
   // this function is used to convert the response in string to array in API response
   protected async _convertMultiSelectType(
     multiSelectColumns: Record<string, any>[],
@@ -7738,7 +7736,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
-  @trace()
   public async convertMultiSelectTypes(
     data: Record<string, any>,
     dependencyColumns?: Column[],

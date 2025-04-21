@@ -2551,6 +2551,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       );
     }
 
+  @trace()
   public async mmList(
     param: {
       colId: string;
@@ -7618,6 +7619,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                         filename: attachment.title,
                         mimetype: 'image/jpeg',
                         nestedKeys: ['thumbnails', key],
+                        ignoreCache: ignoreCache
                       }),
                     );
                   }

@@ -92,13 +92,15 @@ const calendarData = computed(() => {
   const firstDayToDisplay = startOfMonth.startOf('week').add(firstDayOffset, 'day')
   const today = dayjs()
 
-  const daysInView = Math.min(
-    35,
-    Math.ceil((startOfMonth.daysInMonth() + startOfMonth.day() + (isMondayFirst.value ? 0 : 1)) / 7) * 7,
-  )
+  const daysInMonth = startOfMonth.daysInMonth()
+  const firstDayOfMonth = startOfMonth.day()
+
+  const adjustedFirstDay = isMondayFirst.value ? (firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1) : firstDayOfMonth
+
+  const weeksNeeded = Math.ceil((daysInMonth + adjustedFirstDay) / 7)
 
   return {
-    weeks: Array.from({ length: daysInView / 7 }, (_, weekIndex) => ({
+    weeks: Array.from({ length: weeksNeeded }, (_, weekIndex) => ({
       weekIndex,
       days: Array.from({ length: 7 }, (_, dayIndex) => {
         const day = firstDayToDisplay.add(weekIndex * 7 + dayIndex, 'day')
@@ -146,7 +148,7 @@ const recordsToDisplay = computed<{
     }
   } = {}
 
-  const findAvailableLane = (dateKey: string, duration: number = 1): number => {
+  const findAvailableLane = (dateKey: string, duration = 1): number => {
     if (!recordsInDay[dateKey]) {
       recordsInDay[dateKey] = { overflow: false, count: 0, overflowCount: 0, lanes: [] }
     }
@@ -169,7 +171,7 @@ const recordsToDisplay = computed<{
     return -1 // No available lane
   }
 
-  const occupyLane = (dateKey: string, lane: number, duration: number = 1) => {
+  const occupyLane = (dateKey: string, lane: number, duration = 1) => {
     for (let i = 0; i < duration; i++) {
       const occupyDate = dayjs(dateKey).add(i, 'day').format('YYYY-MM-DD')
       if (!recordsInDay[occupyDate]) {
@@ -967,6 +969,10 @@ const addRecord = (date: dayjs.Dayjs) => {
     content: '';
     z-index: 2;
     box-shadow: 0 0 0 2px #3366ff !important;
+  }
+
+  &:first-of-type::after {
+    @apply left-0.5 w-[calc(100%_-_2px)];
   }
 }
 </style>

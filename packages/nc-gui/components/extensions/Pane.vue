@@ -105,6 +105,7 @@ defineExpose({
   onReady: () => {
     isReady.value = true
   },
+  isReady,
 })
 
 watch(isPanelExpanded, (newValue) => {
@@ -163,7 +164,7 @@ onMounted(() => {
     "
   >
     <Transition name="layout" :duration="150">
-      <div v-if="isPanelExpanded" class="flex flex-col h-full">
+      <div v-show="isPanelExpanded" class="flex flex-col h-full">
         <div
           ref="extensionHeaderRef"
           class="h-[var(--toolbar-height)] flex items-center gap-3 px-4 py-2 border-b-1 border-gray-200 bg-white"

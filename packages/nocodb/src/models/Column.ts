@@ -1,11 +1,13 @@
 import {
   AllowedColumnTypesForQrAndBarcodes,
+  enumColors,
   isAIPromptCol,
   isLinksOrLTAR,
   LongTextAiMetaProp,
   UITypes,
 } from 'nocodb-sdk';
 import { Logger } from '@nestjs/common';
+import type { MetaService } from 'src/meta/meta.service';
 import type { ColumnReqType, ColumnType } from 'nocodb-sdk';
 import type { NcContext } from '~/interface/config';
 import FormulaColumn from '~/models/FormulaColumn';
@@ -45,18 +47,7 @@ import {
 } from '~/utils/modelUtils';
 import { getFormulasReferredTheColumn } from '~/helpers/formulaHelpers';
 
-const selectColors = [
-  '#cfdffe',
-  '#d0f1fd',
-  '#c2f5e8',
-  '#ffdaf6',
-  '#ffdce5',
-  '#fee2d5',
-  '#ffeab6',
-  '#d1f7c4',
-  '#ede2fe',
-  '#eeeeee',
-];
+const selectColors = enumColors.light;
 
 const logger = new Logger('Column');
 
@@ -123,6 +114,8 @@ export default class Column<T = any> implements ColumnType {
 
   public asId?: string;
 
+  public readonly?: boolean;
+
   constructor(data: Partial<(ColumnType & { asId?: string }) | Column>) {
     Object.assign(this, data);
   }
@@ -186,6 +179,7 @@ export default class Column<T = any> implements ColumnType {
       'meta',
       'virtual',
       'description',
+      'readonly',
     ]);
 
     if (!insertObj.column_name) {
@@ -358,11 +352,13 @@ export default class Column<T = any> implements ColumnType {
           formula: column?.formula,
           formula_raw: column?.formula_raw,
           parsed_tree: column?.parsed_tree,
+          error: column?.error,
           icon: column?.icon,
           type: column.type,
           theme: column.theme,
           color: column.color,
           fk_webhook_id: column?.fk_webhook_id,
+          fk_script_id: column?.fk_script_id,
           label: column.label,
           fk_integration_id: column.fk_integration_id,
           model: column.model,
@@ -1398,6 +1394,7 @@ export default class Column<T = any> implements ColumnType {
       'system',
       'validate',
       'meta',
+      'readonly',
     ]);
 
     if (column.validate) {
@@ -1554,12 +1551,81 @@ export default class Column<T = any> implements ColumnType {
       for (const linkCol of ltarColumns) {
         await View.clearSingleQueryCache(
           context,
-          (linkCol.colOptions as LinksColumn).fk_related_model_id,
+          (linkCol as LinksColumn).fk_related_model_id,
           null,
           ncMeta,
         );
       }
     }
+  }
+
+  static async updateFormulaColumnToNewType(
+    context: NcContext,
+    {
+      formulaColumn,
+      destinationColumn,
+      ncMeta = Noco.ncMeta,
+    }: {
+      formulaColumn: Column;
+      destinationColumn: Column;
+      ncMeta?: MetaService;
+    },
+  ) {
+    const updateObj = extractProps(destinationColumn, [
+      'column_name',
+      'title',
+      'description',
+      'uidt',
+      'dt',
+      'np',
+      'ns',
+      'clen',
+      'cop',
+      'pk',
+      'rqd',
+      'un',
+      'ct',
+      'ai',
+      'unique',
+      'cdf',
+      'cc',
+      'csn',
+      'dtx',
+      'dtxp',
+      'dtxs',
+      'au',
+      'pv',
+      'system',
+      'validate',
+      'meta',
+    ]);
+    await ncMeta.metaUpdate(
+      context.workspace_id,
+      context.base_id,
+      MetaTable.COLUMNS,
+      prepareForDb(updateObj),
+      formulaColumn.id,
+    );
+    await ncMeta.metaDelete(
+      context.workspace_id,
+      context.base_id,
+      MetaTable.COL_FORMULA,
+      {
+        fk_column_id: formulaColumn.id,
+      },
+    );
+    await ncMeta.metaDelete(
+      context.workspace_id,
+      context.base_id,
+      MetaTable.COLUMNS,
+      destinationColumn.id,
+    );
+    // update the caches to reflect new columns
+    await NocoCache.update(
+      `${CacheScope.COLUMN}:${formulaColumn.id}`,
+      prepareForResponse(updateObj),
+    );
+    await NocoCache.del(`${CacheScope.COLUMN}:${destinationColumn.id}`);
   }
 
   static async updateAlias(
@@ -1786,6 +1852,7 @@ export default class Column<T = any> implements ColumnType {
         'source_id',
         'system',
         'meta',
+        'readonly',
       ]);
 
       if (column.meta && typeof column.meta === 'object') {

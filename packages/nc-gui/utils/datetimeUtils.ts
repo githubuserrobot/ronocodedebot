@@ -1,11 +1,9 @@
 import dayjs from 'dayjs'
-import { dateFormats, timeFormats } from 'nocodb-sdk'
+import { constructDateFormat, constructDateTimeFormat, constructTimeFormat, dateFormats, timeFormats } from 'nocodb-sdk'
 
-export function parseStringDateTime(
-  v: string,
-  dateTimeFormat: string = `${dateFormats[0]} ${timeFormats[0]}`,
-  toLocal: boolean = true,
-) {
+export { constructDateFormat, constructDateTimeFormat, constructTimeFormat }
+
+export function parseStringDateTime(v: string, dateTimeFormat = `${dateFormats[0]} ${timeFormats[0]}`, toLocal = true) {
   const dayjsObj = toLocal ? dayjs(v).local() : dayjs(v)
 
   if (dayjsObj.isValid()) {
@@ -54,4 +52,19 @@ export const timeAgo = (date: string) => {
   }
 
   return `${years}y ago`
+}
+
+export const hookLogFormatter = (date: string) => {
+  return date && dayjs(date).format('YYYY-MM-DD HH:mm:ss')
+}
+
+export function parseFlexibleDate(dateString: string) {
+  const formats = ['YYYY-MM-DD', 'YYYY/MM/DD', 'DD/MM/YYYY', 'DD-MM-YYYY', 'MM/DD/YYYY', 'MM-DD-YYYY']
+
+  for (const format of formats) {
+    const date = dayjs(dateString, format, true)
+    if (date.isValid()) {
+      return date
+    }
+  }
 }

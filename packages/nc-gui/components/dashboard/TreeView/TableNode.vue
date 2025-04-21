@@ -68,6 +68,8 @@ const isTableDeleteDialogVisible = ref(false)
 
 const isOptionsOpen = ref(false)
 
+const isSyncModalOpen = ref(false)
+
 const input = ref<HTMLInputElement>()
 
 /** Is editing the table name enabled */
@@ -241,6 +243,11 @@ const duplicateTable = (table: SidebarTableNode) => {
   _duplicateTable(table)
 }
 
+const onSyncOptions = () => {
+  isOptionsOpen.value = false
+  isSyncModalOpen.value = true
+}
+
 const focusInput = () => {
   setTimeout(() => {
     input.value?.focus()
@@ -401,10 +408,6 @@ const validateTitle = async () => {
 async function onRename() {
   if (!isEditing.value) return
 
-  if (formState.title) {
-    formState.title = formState.title.trim()
-  }
-
   if (!formState.title?.trim() || table.value.title === formState.title) {
     onCancel()
     return
@@ -419,7 +422,7 @@ async function onRename() {
 
   const originalTitle = table.value.title
 
-  table.value.title = formState.title || ''
+  table.value.title = formState.title.trim() || ''
 
   const updateTitle = (title: string) => {
     table.value.title = title
@@ -482,8 +485,15 @@ async function onRename() {
                     </template>
 
                     <component
+                      :is="iconMap.sync"
+                      v-if="table?.synced"
+                      class="w-4 text-sm"
+                      :class="isTableOpened ? '!text-brand-600/85' : '!text-gray-600/75'"
+                    />
+
+                    <component
                       :is="iconMap.table"
-                      v-if="table.type === 'table'"
+                      v-else-if="table.type === 'table'"
                       class="w-4 text-sm"
                       :class="isTableOpened ? '!text-brand-600/85' : '!text-gray-600/75'"
                     />
@@ -601,6 +611,18 @@ async function onRename() {
                   </NcMenuItem>
 
                   <NcMenuItem
+                    v-if="table?.synced && isUIAllowed('tableDelete', { roles: baseRole, source })"
+                    :data-testid="`sidebar-table-sync-${table.title}`"
+                    class="nc-table-sync"
+                    @click="onSyncOptions"
+                  >
+                    <div v-e="['c:table:sync']" class="flex gap-2 items-center">
+                      <GeneralIcon icon="sync" class="opacity-80" />
+                      Sync Options
+                    </div>
+                  </NcMenuItem>
+
+                  <NcMenuItem
                     v-if="isUIAllowed('tableDescriptionEdit', { roles: baseRole, source })"
                     :data-testid="`sidebar-table-description-${table.title}`"
                     class="nc-table-description"
@@ -680,6 +702,12 @@ async function onRename() {
     <DlgTableDelete
       v-if="table.id && base?.id"
       v-model:visible="isTableDeleteDialogVisible"
+      :table-id="table.id"
+      :base-id="base.id"
+    />
+    <LazyDashboardSettingsSyncEdit
+      v-if="table && table.id && table.synced && base?.id && isSyncModalOpen"
+      v-model:open="isSyncModalOpen"
       :table-id="table.id"
       :base-id="base.id"
     />

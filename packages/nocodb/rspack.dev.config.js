@@ -7,7 +7,13 @@ const { TsCheckerRspackPlugin } = require('ts-checker-rspack-plugin');
 const baseDevConfig = {
   mode: 'development',
   target: 'node',
-  devtool: 'eval-source-map',
+  devtool: 'inline-source-map',
+  entry: {
+    // HMR is failing in most of the cases for now. So, we are disabling it.
+    // Uncomment the below line when enabling HMR
+    // main: [process.env.ENTRYPOINT, 'webpack/hot/poll?100'],
+    main: [process.env.ENTRYPOINT],
+  },
   module: {
     rules: [
       {
@@ -56,10 +62,10 @@ const baseDevConfig = {
     }),
   ],
   resolve: {
+    extensions: ['.tsx', '.ts', '.js', '.json', '.node'],
     tsConfig: {
       configFile: resolve('tsconfig.json'),
     },
-    extensions: ['.tsx', '.ts', '.js', '.json', '.node'],
   },
   optimization: {
     minimize: false,
@@ -72,17 +78,25 @@ const baseDevConfig = {
     }),
     new RunScriptWebpackPlugin({
       name: 'main.js',
+      // Set autorestart false when enabling HMR
+      autoRestart: true,
     }),
+    // Uncomment the below line when enabling HMR
+    // new rspack.HotModuleReplacementPlugin(),
     new rspack.CopyRspackPlugin({
       patterns: [{ from: 'src/public', to: 'public' }],
     }),
     new TsCheckerRspackPlugin({
       typescript: {
-        configFile: join('tsconfig.json'),
+        configFile: resolve('tsconfig.json'),
       },
     }),
   ],
   output: {
+    devtoolModuleFilenameTemplate: (info) => {
+      const absolutePath = resolve(info.absoluteResourcePath);
+      return `file://${absolutePath}`;
+    },
     path: join(__dirname, 'dist'),
     filename: 'main.js',
     library: {
@@ -91,14 +105,19 @@ const baseDevConfig = {
     clean: true,
   },
   devServer: {
-    devMiddleware: {
-      writeToDisk: true,
-    },
-    port: 9001,
+    // Uncomment the below line when enabling HMR
+    //  hot: true,
   },
+  cache: true,
+  experiments: {
+    cache: {
+      type: 'persistent',
+    },
+  },
+  watch: true,
   watchOptions: {
     ignored: /node_modules/,
-    poll: true,
+    poll: 100,
   },
 };
 

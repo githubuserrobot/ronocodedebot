@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Req,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { OrgUserRoles } from 'nocodb-sdk';
@@ -24,7 +25,7 @@ import { NcRequest } from '~/interface/config';
 @Controller()
 @UseGuards(MetaApiLimiterGuard, GlobalGuard)
 export class OrgUsersController {
-  constructor(private readonly orgUsersService: OrgUsersService) {}
+  constructor(protected readonly orgUsersService: OrgUsersService) {}
 
   @Get('/api/v1/users')
   @Acl('userList', {
@@ -51,10 +52,15 @@ export class OrgUsersController {
     allowedRoles: [OrgUserRoles.SUPER_ADMIN],
     blockApiTokenAccess: true,
   })
-  async userUpdate(@Body() body, @Param('userId') userId: string) {
+  async userUpdate(
+    @Body() body,
+    @Param('userId') userId: string,
+    @Request() req: NcRequest,
+  ) {
     return await this.orgUsersService.userUpdate({
       user: body,
       userId,
+      req,
     });
   }
 

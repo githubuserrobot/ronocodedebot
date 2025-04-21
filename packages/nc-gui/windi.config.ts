@@ -11,15 +11,16 @@ import animations from '@windicss/plugin-animations'
 // @ts-expect-error no types for plugin-question-mark
 import questionMark from '@windicss/plugin-question-mark'
 
-import { theme as colors, lightTheme, themeColors, themeV2Colors, themeV3Colors } from './utils/colorsUtils'
+import { theme as colors, themeColors, themeV2Colors, themeV3Colors, themeVariables } from './utils/colorsUtils'
 
 const isEE = process.env.EE
 
 export default defineConfig({
   extract: {
     include: [
-      isEE ? '../**/*.{vue,html,jsx,tsx,css,scss}' : '**/*.{vue,html,jsx,tsx,css,scss}',
-      isEE ? '../extensions/**/*.md' : 'extensions/**/*.md',
+      ...(isEE
+        ? ['../**/*.{vue,html,jsx,tsx,css,scss}', '../extensions/**/*.md']
+        : ['**/*.{vue,html,jsx,tsx,css,scss}', 'extensions/**/*.md']),
     ],
     exclude: ['node_modules', '.git'],
   },
@@ -88,6 +89,7 @@ export default defineConfig({
       fontSize: {
         tiny: ['11px', '14px'],
         small: ['13px', '16px'],
+        small1: ['13px', '18px'],
       },
       fontWeight: {
         thin: 150,
@@ -106,6 +108,7 @@ export default defineConfig({
       borderColor: {
         primary: 'rgba(51, 102, 255, 1)',
         accent: 'rgba(var(--color-accent), var(--tw-border-opacity))',
+        error: 'var(--ant-error-color)',
       },
       backgroundColor: {
         primary: 'rgba(var(--color-primary), var(--tw-bg-opacity))',
@@ -129,10 +132,10 @@ export default defineConfig({
         ...themeColors,
         ...themeV2Colors,
         ...themeV3Colors,
-        ...lightTheme.content,
-        ...lightTheme.border,
-        ...lightTheme.background,
-        ...lightTheme.fill,
+        ...themeVariables.content,
+        ...themeVariables.border,
+        ...themeVariables.background,
+        ...themeVariables.fill,
         primary: 'rgba(var(--color-primary), var(--tw-bg-opacity))',
         accent: 'rgba(var(--color-accent), var(--tw-bg-opacity))',
         dark: colors.dark,

@@ -9,12 +9,14 @@ import {
   ViewTypes,
   getAvailableAggregations,
 } from 'nocodb-sdk'
+import type { EventHook } from '@vueuse/core'
 
 const [useProvideViewAggregate, useViewAggregate] = useInjectionState(
   (
     view: Ref<ViewType | undefined>,
     meta: Ref<TableType | undefined> | ComputedRef<TableType | undefined>,
     where?: ComputedRef<string | undefined>,
+    reloadVisibleDataHook?: EventHook<void>,
   ) => {
     const { $api: api } = useNuxtApp()
 
@@ -65,7 +67,7 @@ const [useProvideViewAggregate, useViewAggregate] = useInjectionState(
         value: aggregations.value[fields.value[0].title] ?? null,
         column: fields.value[0],
         field: gridViewCols.value[fields.value[0].id!],
-        width: `${Number((gridViewCols.value[fields.value[0]!.id!].width ?? '').replace('px', '')) + 64}px` || '244px',
+        width: `${Number((gridViewCols.value[fields.value[0]!.id!].width ?? '').replace('px', '')) + 80}px` || '260px',
       }
     })
 
@@ -105,6 +107,7 @@ const [useProvideViewAggregate, useViewAggregate] = useInjectionState(
                 })
 
             Object.assign(aggregations.value, data)
+            reloadVisibleDataHook?.trigger()
           } catch (error) {
             console.log(error)
             message.error(await extractSdkResponseErrorMsgv2(error as any))
@@ -122,6 +125,7 @@ const [useProvideViewAggregate, useViewAggregate] = useInjectionState(
         ],
       })
       await updateGridViewColumn(fieldId, { aggregation: agg })
+      reloadVisibleDataHook?.trigger()
     }
 
     const aggregateFormulaFields = computed(() => {
@@ -183,6 +187,7 @@ const [useProvideViewAggregate, useViewAggregate] = useInjectionState(
     return {
       loadViewAggregate,
       isPublic,
+      aggregations,
       updateAggregate,
       getAggregations,
       displayFieldComputed,

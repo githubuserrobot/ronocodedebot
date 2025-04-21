@@ -1,3 +1,5 @@
+import type { DefaultOptionType } from 'ant-design-vue/lib/select'
+
 export const modalSizes = {
   xs: {
     width: 'min(calc(100vw - 32px), 448px)',
@@ -14,6 +16,10 @@ export const modalSizes = {
   lg: {
     width: 'min(80vw, 1280px)',
     height: 'min(90vh, 864px)',
+  },
+  fullscreen: {
+    width: '100vw',
+    height: '100vh',
   },
 }
 
@@ -112,4 +118,24 @@ export const searchCompare = (source?: NestedArray<string | number | undefined>,
     .toString()
     .toLowerCase()
     .includes((query || '').toLowerCase())
+}
+
+/**
+ * Filters options for an Ant Design Select component based on an input value.
+ *
+ * @param inputValue - The input value to filter against.
+ * @param option - The option to evaluate for filtering.
+ * @param searchKey - The key(s) in the option object to compare against the input value. Defaults to 'key'.
+ * @returns `true` if the option matches the input value, otherwise `false`.
+ */
+export const antSelectFilterOption = (
+  inputValue: string,
+  option?: DefaultOptionType,
+  searchKey: keyof DefaultOptionType | (keyof DefaultOptionType)[] = 'key',
+) => {
+  if (!option) return false
+
+  const optionValue = ncIsArray(searchKey) ? searchKey.map((key) => option[key]) : [option[searchKey]]
+
+  return searchCompare(optionValue, inputValue)
 }

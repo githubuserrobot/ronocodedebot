@@ -15,6 +15,8 @@ const imageExt = [
   'heic-sequence',
 ]
 
+const audioExt = ['mp3', 'flac', 'wav', 'm4a']
+
 const videoExt = [
   'webm',
   'mpg',
@@ -33,6 +35,7 @@ const videoExt = [
   '3g2',
   'vob',
   'ts',
+  'mp4a',
 ]
 
 const wordExt = ['txt', 'doc', 'docx']
@@ -70,7 +73,7 @@ const officeExt = [
 ]
 
 const isAudio = (name: string, mimetype?: string) => {
-  return name?.toLowerCase().endsWith('.mp3') || mimetype?.startsWith('audio/')
+  return audioExt.some((e) => name?.toLowerCase().endsWith(`.${e}`)) || mimetype?.startsWith('audio/')
 }
 
 const isVideo = (name: string, mimetype?: string) => {

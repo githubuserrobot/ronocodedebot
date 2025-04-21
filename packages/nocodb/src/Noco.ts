@@ -7,18 +7,23 @@ import dotenv from 'dotenv';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import requestIp from 'request-ip';
 import cookieParser from 'cookie-parser';
+import { NcDebug } from 'nc-gui/utils/debug';
 import type { INestApplication } from '@nestjs/common';
 import type { MetaService } from '~/meta/meta.service';
 import type { IEventEmitter } from '~/modules/event-emitter/event-emitter.interface';
 import type { Express } from 'express';
 import type http from 'http';
 import type Sharp from 'sharp';
+import type { AppHooksService } from '~/services/app-hooks/app-hooks.service';
 import { MetaTable, RootScopes } from '~/utils/globals';
 import { AppModule } from '~/app.module';
 import { isEE, T } from '~/utils';
-import { Integration } from '~/models';
+import { getAppUrl } from '~/utils/appUrl';
+import { DataReflection, Integration } from '~/models';
+import { getRedisURL } from '~/helpers/redisHelpers';
 
 dotenv.config();
+declare const module: any;
 
 export default class Noco {
   protected static _this: Noco;
@@ -28,9 +33,7 @@ export default class Noco {
   protected static _server: Express;
 
   public static get dashboardUrl(): string {
-    const siteUrl = `http://localhost:${process.env.PORT || 8080}`;
-
-    return `${siteUrl}${this._this?.config?.dashboardPath}`;
+    return getAppUrl();
   }
 
   public static config: any;
@@ -38,6 +41,7 @@ export default class Noco {
   public readonly router: express.Router;
   public readonly baseRouter: express.Router;
   public static _ncMeta: any;
+  public static appHooksService: AppHooksService;
   public readonly metaMgr: any;
   public readonly metaMgrv2: any;
   public env: string;
@@ -97,18 +101,18 @@ export default class Noco {
     return (this.ee = false);
   }
 
-  declare module: any;
-
   static async init(param: any, httpServer: http.Server, server: Express) {
     const nestApp = await NestFactory.create(AppModule, {
       bufferLogs: true,
+      bodyParser: false,
     });
     this.initCustomLogger(nestApp);
+    NcDebug.log('Custom logger initialized');
     nestApp.flushLogs();
 
-    if ((module as any).hot) {
-      (module as any).hot.accept();
-      (module as any).hot.dispose(() => nestApp.close());
+    if ((module as any)?.hot) {
+      (module as any).hot?.accept?.();
+      (module as any).hot?.dispose?.(() => nestApp.close());
     }
 
     try {
@@ -120,13 +124,14 @@ export default class Noco {
     }
 
     if (process.env.NC_WORKER_CONTAINER === 'true') {
-      if (!process.env.NC_REDIS_URL) {
+      if (!getRedisURL()) {
         throw new Error('NC_REDIS_URL is required');
       }
       process.env.NC_DISABLE_TELE = 'true';
     }
 
     nestApp.useWebSocketAdapter(new IoAdapter(httpServer));
+    NcDebug.log('Websocket adapter initialized');
 
     this._httpServer = nestApp.getHttpAdapter().getInstance();
     this._server = server;
@@ -135,12 +140,13 @@ export default class Noco {
     nestApp.use(cookieParser());
 
     nestApp.useWebSocketAdapter(new IoAdapter(httpServer));
-
-    nestApp.use(
-      express.json({ limit: process.env.NC_REQUEST_BODY_SIZE || '50mb' }),
-    );
+    NcDebug.log('Websocket adapter initialized');
 
     await nestApp.init();
+    NcDebug.log('Nest app initialized');
+
+    await nestApp.enableShutdownHooks();
+    NcDebug.log('Shutdown hooks enabled');
 
     const dashboardPath = process.env.NC_DASHBOARD_URL ?? '/dashboard';
     server.use(express.static(path.join(__dirname, 'public')));
@@ -150,6 +156,11 @@ export default class Noco {
     }
 
     await Integration.init();
+    NcDebug.log('Integration initialized');
+
+    if (process.env.NC_WORKER_CONTAINER !== 'true') {
+      await DataReflection.init();
+    }
 
     return nestApp.getHttpAdapter().getInstance();
   }

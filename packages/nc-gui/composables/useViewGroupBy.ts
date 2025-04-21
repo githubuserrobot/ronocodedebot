@@ -9,7 +9,6 @@ import {
 } from 'nocodb-sdk'
 import { UITypes } from 'nocodb-sdk'
 import type { Ref } from 'vue'
-import { message } from 'ant-design-vue'
 import type { Group } from '../lib/types'
 
 const excludedGroupingUidt = [UITypes.Attachment, UITypes.QrCode, UITypes.Barcode, UITypes.Button]
@@ -21,15 +20,16 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
     where?: ComputedRef<string | undefined>,
     isPublic = false,
   ) => {
-    const groupByLimit: number = 3
+    const groupByLimit = 3
 
     const { api } = useApi()
+    const { $api } = useNuxtApp()
 
     const { appInfo } = useGlobal()
 
     const { base } = storeToRefs(useBase())
 
-    const { sharedView, fetchSharedViewData, fetchBulkAggregatedData, fetchBulkListData, fetchBulkGroupData } = useSharedView()
+    const { sharedView, fetchSharedViewData, fetchBulkAggregatedData } = useSharedView()
 
     const { gridViewCols } = useViewColumnsOrThrow()
 
@@ -289,8 +289,6 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
             pageSize: keyExists.paginationData.pageSize || temp.paginationData.pageSize,
             totalRows: temp.count,
           }
-          temp.color = keyExists.color
-
           // update group
           Object.assign(keyExists, temp)
           continue
@@ -323,7 +321,7 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
     async function loadGroups(
       params: any = {},
       group?: Group,
-      options?: {
+      _options?: {
         triggerChildOnly: boolean
       },
     ) {
@@ -356,39 +354,39 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
           group.displayValueProp = (relatedTableMeta.columns?.find((c) => c.pv) || relatedTableMeta.columns?.[0])?.title || ''
         }
 
-        if (!options?.triggerChildOnly) {
-          const response = !isPublic
-            ? await api.dbViewRow.groupBy('noco', base.value.id, view.value.fk_model_id, view.value.id, {
-                offset: ((group.paginationData.page ?? 0) - 1) * (group.paginationData.pageSize ?? groupByGroupLimit.value),
-                limit: group.paginationData.pageSize ?? groupByGroupLimit.value,
+        // if (!options?.triggerChildOnly) {
+        const response = !isPublic
+          ? await api.dbViewRow.groupBy('noco', base.value.id, view.value.fk_model_id, view.value.id, {
+              offset: ((group.paginationData.page ?? 0) - 1) * groupByGroupLimit.value,
+              limit: groupByGroupLimit.value,
+              ...params,
+              ...(isUIAllowed('sortSync') ? {} : { sortArrJson: JSON.stringify(sorts.value) }),
+              ...(isUIAllowed('filterSync') ? {} : { filterArrJson: JSON.stringify(nestedFilters.value) }),
+              where: `${nestedWhere}`,
+              sort: `${getSortParams(groupby.sort)}${groupby.column.title}`,
+              column_name: groupby.column.title,
+            } as any)
+          : await api.public.dataGroupBy(
+              sharedView.value!.uuid!,
+              {
+                offset: ((group.paginationData.page ?? 0) - 1) * groupByGroupLimit.value,
+                limit: groupByGroupLimit.value,
                 ...params,
-                ...(isUIAllowed('sortSync') ? {} : { sortArrJson: JSON.stringify(sorts.value) }),
-                ...(isUIAllowed('filterSync') ? {} : { filterArrJson: JSON.stringify(nestedFilters.value) }),
-                where: `${nestedWhere}`,
+                where: nestedWhere,
                 sort: `${getSortParams(groupby.sort)}${groupby.column.title}`,
                 column_name: groupby.column.title,
-              } as any)
-            : await api.public.dataGroupBy(
-                sharedView.value!.uuid!,
-                {
-                  offset: ((group.paginationData.page ?? 0) - 1) * (group.paginationData.pageSize ?? groupByGroupLimit.value),
-                  limit: group.paginationData.pageSize ?? groupByGroupLimit.value,
-                  ...params,
-                  where: nestedWhere,
-                  sort: `${getSortParams(groupby.sort)}${groupby.column.title}`,
-                  column_name: groupby.column.title,
-                  sortsArr: sorts.value,
-                  filtersArr: nestedFilters.value,
+                sortsArr: sorts.value,
+                filtersArr: nestedFilters.value,
+              },
+              {
+                headers: {
+                  'xc-password': sharedViewPassword.value,
                 },
-                {
-                  headers: {
-                    'xc-password': sharedViewPassword.value,
-                  },
-                },
-              )
+              },
+            )
 
-          group = await processGroupData(response, group)
-        }
+        group = await processGroupData(response, group)
+        // }
 
         if (appInfo.value.ee && group?.children?.length) {
           const aggregationAliasMapper = new AliasMapper()
@@ -435,84 +433,6 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
             })
           }
         }
-
-        if (group?.children?.length && group.nestedIn.length === groupBy.value.length - 1) {
-          const aliasMapper = new AliasMapper()
-
-          const childViewFilters = group?.children?.map((childGroup) => {
-            return {
-              alias: aliasMapper.generateAlias(childGroup.key),
-              where: calculateNestedWhere(childGroup.nestedIn, where?.value),
-              offset:
-                ((childGroup.paginationData.page ?? 0) - 1) * (childGroup.paginationData.pageSize ?? groupByRecordLimit.value),
-              limit: childGroup.paginationData.pageSize ?? groupByRecordLimit.value,
-              ...(isUIAllowed('sortSync') ? {} : { sortArrJson: JSON.stringify(sorts.value) }),
-              ...(isUIAllowed('filterSync') ? {} : { filterArrJson: JSON.stringify(nestedFilters.value) }),
-            }
-          })
-
-          if (childViewFilters.length > 0) {
-            const bulkData = !isPublic
-              ? await api.dbDataTableBulkList.dbDataTableBulkList(
-                  meta.value.id,
-                  {
-                    viewId: view.value.id,
-                  },
-                  childViewFilters,
-                  {},
-                )
-              : await fetchBulkListData({}, childViewFilters)
-
-            await aliasMapper.process(bulkData, (originalKey, value: any) => {
-              const child = (group?.children ?? []).find((c) => c.key.toString() === (originalKey as any).toString())
-              if (child) {
-                child.count = value.pageInfo.totalRows ?? 0
-                child.rows = formatData(value.list)
-                child.paginationData = value.pageInfo
-              }
-            })
-          }
-        }
-
-        if (group?.children?.length && group.nestedIn.length < groupBy.value.length - 1) {
-          const aliasMapper = new AliasMapper()
-
-          const childGroupFilters = group?.children?.map((childGroup) => {
-            const childGroupBy = groupBy.value[childGroup.nestedIn.length]
-            const childNestedWhere = calculateNestedWhere(childGroup.nestedIn, where?.value)
-
-            return {
-              alias: aliasMapper.generateAlias(childGroup.key),
-              offset:
-                ((childGroup.paginationData.page ?? 0) - 1) * (childGroup.paginationData.pageSize ?? groupByGroupLimit.value),
-              limit: childGroup.paginationData.pageSize ?? groupByGroupLimit.value,
-              ...(isUIAllowed('sortSync') ? {} : { sortArrJson: JSON.stringify(sorts.value) }),
-              ...(isUIAllowed('filterSync') ? {} : { filterArrJson: JSON.stringify(nestedFilters.value) }),
-              where: `${childNestedWhere}`,
-              sort: `${getSortParams(childGroupBy.sort)}${childGroupBy.column.title}`,
-              column_name: childGroupBy.column.title,
-            }
-          })
-
-          if (childGroupFilters?.length > 0) {
-            const bulkGroupData = !isPublic
-              ? await api.dbDataTableBulkGroupList.dbDataTableBulkGroupList(
-                  meta.value.id,
-                  {
-                    viewId: view.value.id,
-                  },
-                  childGroupFilters,
-                )
-              : await fetchBulkGroupData({}, childGroupFilters)
-
-            await aliasMapper.process(bulkGroupData, async (originalKey, value) => {
-              const child = (group?.children ?? []).find((c) => c.key.toString() === originalKey.toString())
-              if (child) {
-                Object.assign(child, await processGroupData(value, child))
-              }
-            })
-          }
-        }
       } catch (e) {
         console.log(e)
         message.error(await extractSdkResponseErrorMsg(e))
@@ -548,6 +468,7 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
 
         group.count = response.pageInfo.totalRows ?? 0
         group.rows = formatData(response.list)
+        await loadAggCommentsCount(group.rows)
         group.paginationData = response.pageInfo
       } catch (e) {
         message.error(await extractSdkResponseErrorMsg(e))
@@ -790,6 +711,32 @@ const [useProvideViewGroupBy, useViewGroupBy] = useInjectionState(
       }
     })
 
+    async function loadAggCommentsCount(formattedData: Array<Row>) {
+      if (!isUIAllowed('commentCount') || isPublic.value) return
+
+      const ids = formattedData
+        .filter(({ rowMeta: { new: isNew } }) => !isNew)
+        .map(({ row }) => extractPkFromRow(row, meta?.value?.columns as ColumnType[]))
+        .filter(Boolean)
+
+      if (!ids.length) return
+
+      try {
+        const aggCommentCount = await $api.utils.commentCount({
+          ids,
+          fk_model_id: meta.value!.id as string,
+        })
+
+        formattedData.forEach((row) => {
+          const id = extractPkFromRow(row.row, meta.value?.columns as ColumnType[])
+          const count = aggCommentCount?.find((c: Record<string, any>) => c.row_id === id)?.count || 0
+          row.rowMeta = row.rowMeta ?? {}
+          row.rowMeta.commentCount = +count
+        })
+      } catch (e) {
+        console.error('Failed to load aggregate comment count:', e)
+      }
+    }
     return {
       rootGroup,
       groupBy,

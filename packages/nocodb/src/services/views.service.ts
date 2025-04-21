@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AppEvents, ProjectRoles } from 'nocodb-sdk';
+import { AppEvents, ProjectRoles, ViewTypes } from 'nocodb-sdk';
 import type {
   SharedViewReqType,
   UserType,
@@ -9,7 +9,14 @@ import type { NcContext, NcRequest } from '~/interface/config';
 import { AppHooksService } from '~/services/app-hooks/app-hooks.service';
 import { validatePayload } from '~/helpers';
 import { NcError } from '~/helpers/catchError';
-import { BaseUser, Model, ModelRoleVisibility, View } from '~/models';
+import {
+  BaseUser,
+  CustomUrl,
+  Model,
+  ModelRoleVisibility,
+  User,
+  View,
+} from '~/models';
 
 // todo: move
 async function xcVisibilityMetaGet(
@@ -127,6 +134,7 @@ export class ViewsService {
       user: param.user,
       view,
       req: param.req,
+      context,
     });
 
     return res;
@@ -219,14 +227,22 @@ export class ViewsService {
       includeCreatedByAndUpdateBy,
     );
 
+    let owner = param.req.user;
+
+    if (ownedBy && ownedBy !== param.req.user?.id) {
+      owner = await User.get(ownedBy);
+    }
+
     this.appHooksService.emit(AppEvents.VIEW_UPDATE, {
       view: {
         ...oldView,
         ...param.view,
       },
+      oldView,
       user: param.user,
-
       req: param.req,
+      context,
+      owner,
     });
     return result;
   }
@@ -243,10 +259,33 @@ export class ViewsService {
 
     await View.delete(context, param.viewId);
 
-    this.appHooksService.emit(AppEvents.VIEW_DELETE, {
+    let deleteEvent = AppEvents.GRID_DELETE;
+
+    //  decide event based on type
+    if (view.type === ViewTypes.FORM) {
+      deleteEvent = AppEvents.FORM_DELETE;
+    } else if (view.type === ViewTypes.CALENDAR) {
+      deleteEvent = AppEvents.CALENDAR_DELETE;
+    } else if (view.type === ViewTypes.GALLERY) {
+      deleteEvent = AppEvents.GALLERY_DELETE;
+    } else if (view.type === ViewTypes.KANBAN) {
+      deleteEvent = AppEvents.KANBAN_DELETE;
+    } else if (view.type === ViewTypes.MAP) {
+      deleteEvent = AppEvents.MAP_DELETE;
+    }
+
+    let owner = param.req.user;
+
+    if (view.owned_by && view.owned_by !== param.req.user?.id) {
+      owner = await User.get(view.owned_by);
+    }
+
+    this.appHooksService.emit(deleteEvent, {
       view,
       user: param.user,
+      owner,
       req: param.req,
+      context,
     });
 
     return true;
@@ -256,7 +295,9 @@ export class ViewsService {
     context: NcContext,
     param: {
       viewId: string;
-      sharedView: SharedViewReqType;
+      sharedView: SharedViewReqType & {
+        custom_url_path?: string;
+      };
       user: UserType;
       req: NcRequest;
     },
@@ -272,12 +313,61 @@ export class ViewsService {
       NcError.viewNotFound(param.viewId);
     }
 
-    const result = await View.update(context, param.viewId, param.sharedView);
+    let customUrl: CustomUrl | undefined = await CustomUrl.get({
+      view_id: view.id,
+      id: view.fk_custom_url_id,
+    });
+
+    // Update an existing custom URL if it exists
+    if (customUrl?.id) {
+      const original_path = await View.getSharedViewPath(context, view.id);
+
+      if (param.sharedView.custom_url_path) {
+        // Prepare updated fields conditionally
+        const updates: Partial<CustomUrl> = {
+          original_path,
+        };
+
+        if (param.sharedView.custom_url_path !== undefined) {
+          updates.custom_path = param.sharedView.custom_url_path;
+        }
+
+        // Perform the update if there are changes
+        if (Object.keys(updates).length > 0) {
+          await CustomUrl.update(view.fk_custom_url_id, updates);
+        }
+      } else if (param.sharedView.custom_url_path !== undefined) {
+        // Delete the custom URL if only the custom path is undefined
+        await CustomUrl.delete({ id: view.fk_custom_url_id as string });
+        customUrl = undefined;
+      }
+    } else if (param.sharedView.custom_url_path) {
+      // Insert a new custom URL if it doesn't exist
+
+      const original_path = await View.getSharedViewPath(context, view.id);
+
+      customUrl = await CustomUrl.insert({
+        fk_workspace_id: view.fk_workspace_id,
+        base_id: view.base_id,
+        fk_model_id: view.fk_model_id,
+        view_id: view.id,
+        original_path,
+        custom_path: param.sharedView.custom_url_path,
+      });
+    }
+
+    const result = await View.update(context, param.viewId, {
+      ...param.sharedView,
+      fk_custom_url_id: customUrl?.id ?? null,
+    });
 
     this.appHooksService.emit(AppEvents.SHARED_VIEW_UPDATE, {
       user: param.user,
+      sharedView: { ...view, ...param.sharedView },
+      oldSharedView: { ...view },
       view,
       req: param.req,
+      context,
     });
 
     return result;
@@ -296,12 +386,14 @@ export class ViewsService {
     if (!view) {
       NcError.viewNotFound(param.viewId);
     }
+
     await View.sharedViewDelete(context, param.viewId);
 
     this.appHooksService.emit(AppEvents.SHARED_VIEW_DELETE, {
       user: param.user,
       view,
       req: param.req,
+      context,
     });
 
     return true;

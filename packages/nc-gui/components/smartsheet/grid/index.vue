@@ -3,6 +3,7 @@ import type { ColumnType, GridType } from 'nocodb-sdk'
 import InfiniteTable from './InfiniteTable.vue'
 import Table from './Table.vue'
 import GroupBy from './GroupBy.vue'
+import CanvasTable from './canvas/index.vue'
 
 const meta = inject(MetaInj, ref())
 
@@ -34,7 +35,7 @@ provide(ReloadVisibleDataHookInj, reloadVisibleDataHook)
 
 const tableRef = ref<typeof InfiniteTable>()
 
-useProvideViewAggregate(view, meta, xWhere)
+useProvideViewAggregate(view, meta, xWhere, reloadVisibleDataHook)
 
 const {
   loadData,
@@ -57,12 +58,14 @@ const {
   isLastRow,
   isFirstRow,
   chunkStates,
+  updateRecordOrder,
   clearInvalidRows,
   isRowSortRequiredRows,
   applySorting,
   isBulkOperationInProgress,
   selectedAllRecords,
   bulkDeleteAll,
+  getRows,
 } = useGridViewData(meta, view, xWhere, reloadVisibleDataHook)
 
 const rowHeight = computed(() => {
@@ -212,6 +215,8 @@ const baseColor = computed(() => {
 
 const isInfiniteScrollingEnabled = computed(() => isFeatureEnabled(FEATURE_FLAG.INFINITE_SCROLLING))
 
+const isCanvasTableEnabled = computed(() => isFeatureEnabled(FEATURE_FLAG.CANVAS_GRID_VIEW))
+
 watch([windowSize, leftSidebarWidth], updateViewWidth)
 
 onMounted(() => {
@@ -236,6 +241,7 @@ const {
   islastRow: pisLastRow,
   getExpandedRowIndex: pGetExpandedRowIndex,
   changePage: pChangeView,
+  navigateToSiblingRow: pNavigateToSiblingRow,
 } = useViewData(meta, view, xWhere)
 
 const updateRowCommentCount = (count: number) => {
@@ -274,18 +280,17 @@ const pGoToNextRow = () => {
     const nextPage = pPaginationData.value?.page ? pPaginationData.value?.page + 1 : 1
     pChangeView(nextPage)
   }
-  navigateToSiblingRow(NavigateDir.NEXT)
+  pNavigateToSiblingRow(NavigateDir.NEXT)
 }
 const pGoToPreviousRow = () => {
   const currentIndex = pGetExpandedRowIndex()
-  /* when first index of current page is reached and then clicked back
-    previos page should be loaded
-  */
+  /* when first index of current page is reached and then clicked back previos page should be loaded  */
   if (!pPaginationData.value.isFirstPage && currentIndex === 1) {
     const nextPage = pPaginationData.value?.page ? pPaginationData.value?.page - 1 : 1
     pChangeView(nextPage)
   }
-  navigateToSiblingRow(NavigateDir.PREV)
+
+  pNavigateToSiblingRow(NavigateDir.PREV)
 }
 </script>
 
@@ -311,10 +316,43 @@ const pGoToPreviousRow = () => {
       :bulk-update-rows="pBulkUpdateRows"
       :expand-form="expandForm"
       :remove-row-if-new="pRemoveRowIfNew"
-      :row-height="rowHeight"
+      :row-height-enum="rowHeight"
       @toggle-optimised-query="toggleOptimisedQuery"
       @bulk-update-dlg="bulkUpdateDlg = true"
     />
+
+    <CanvasTable
+      v-else-if="!isGroupBy && isInfiniteScrollingEnabled && isCanvasTableEnabled"
+      ref="tableRef"
+      v-model:selected-all-records="selectedAllRecords"
+      :load-data="loadData"
+      :call-add-empty-row="_addEmptyRow"
+      :delete-row="deleteRow"
+      :update-or-save-row="updateOrSaveRow"
+      :delete-selected-rows="deleteSelectedRows"
+      :delete-range-of-rows="deleteRangeOfRows"
+      :apply-sorting="applySorting"
+      :bulk-update-rows="bulkUpdateRows"
+      :bulk-upsert-rows="bulkUpsertRows"
+      :update-record-order="updateRecordOrder"
+      :bulk-delete-all="bulkDeleteAll"
+      :clear-cache="clearCache"
+      :clear-invalid-rows="clearInvalidRows"
+      :data="cachedRows"
+      :total-rows="totalRows"
+      :sync-count="syncCount"
+      :get-rows="getRows"
+      :chunk-states="chunkStates"
+      :expand-form="expandForm"
+      :remove-row-if-new="removeRowIfNew"
+      :row-height-enum="rowHeight"
+      :selected-rows="selectedRows"
+      :row-sort-required-rows="isRowSortRequiredRows"
+      :is-bulk-operation-in-progress="isBulkOperationInProgress"
+      @toggle-optimised-query="toggleOptimisedQuery"
+      @bulk-update-dlg="bulkUpdateDlg = true"
+    />
+
     <InfiniteTable
       v-else-if="!isGroupBy"
       ref="tableRef"
@@ -328,6 +366,8 @@ const pGoToPreviousRow = () => {
       :apply-sorting="applySorting"
       :bulk-update-rows="bulkUpdateRows"
       :bulk-upsert-rows="bulkUpsertRows"
+      :get-rows="getRows"
+      :update-record-order="updateRecordOrder"
       :bulk-delete-all="bulkDeleteAll"
       :clear-cache="clearCache"
       :clear-invalid-rows="clearInvalidRows"
@@ -350,6 +390,8 @@ const pGoToPreviousRow = () => {
       :group="rootGroup"
       :load-groups="loadGroups"
       :load-group-data="loadGroupData"
+      :call-add-empty-row="pAddEmptyRow"
+      :expand-form="expandForm"
       :load-group-page="loadGroupPage"
       :group-wrapper-change-page="groupWrapperChangePage"
       :row-height="rowHeight"
@@ -358,7 +400,7 @@ const pGoToPreviousRow = () => {
       :redistribute-rows="redistributeRows"
       :view-width="viewWidth"
     />
-    <Suspense v-if="!isGroupBy">
+    <Suspense>
       <LazySmartsheetExpandedForm
         v-if="expandedFormRow && expandedFormDlg"
         v-model="expandedFormDlg"

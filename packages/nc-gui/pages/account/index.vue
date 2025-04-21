@@ -9,6 +9,8 @@ const $route = useRoute()
 
 const { appInfo, signedIn, signOut } = useGlobal()
 
+const { isFeatureEnabled } = useBetaFeatureToggle()
+
 const selectedKeys = computed(() => [
   /^\/account\/users\/?$/.test($route.fullPath)
     ? isUIAllowed('superAdminUserManagement')
@@ -25,7 +27,7 @@ const logout = async () => {
   })
 }
 
-const isSetupPageAllowed = computed(() => isUIAllowed('superAdminSetup') && !isEeUI)
+const isSetupPageAllowed = computed(() => isUIAllowed('superAdminSetup') && (!isEeUI || appInfo.value.isOnPrem))
 
 const { emailConfigured, storageConfigured, loadSetupApps } = useProvideAccountSetupStore()
 
@@ -71,8 +73,7 @@ const isPending = computed(() => !emailConfigured.value || !storageConfigured.va
               </div>
               <NcDivider class="!mt-0" />
 
-              <div class="text-sm text-gray-500 font-semibold ml-4 py-1.5 mt-2">{{ $t('labels.account') }}</div>
-
+              <div class="text-sm text-nc-content-gray-muted font-semibold ml-4 py-1.5 mt-2">{{ $t('labels.account') }}</div>
               <NcMenuItem
                 v-if="isSetupPageAllowed"
                 key="profile"
@@ -215,10 +216,15 @@ const isPending = computed(() => !emailConfigured.value || !storageConfigured.va
 
               <LazyGeneralReleaseInfo />
 
-              <a-tooltip v-if="!appInfo.ee" placement="bottom" :mouse-enter-delay="1">
+              <a-tooltip
+                v-if="!appInfo.ee || isFeatureEnabled(FEATURE_FLAG.LANGUAGE) || appInfo.isOnPrem"
+                placement="bottom"
+                :mouse-enter-delay="1"
+                class="mr-4"
+              >
                 <template #title>{{ $t('title.switchLanguage') }}</template>
 
-                <div class="flex pr-4 items-center">
+                <div class="flex items-center">
                   <LazyGeneralLanguage class="cursor-pointer text-2xl hover:text-gray-800" />
                 </div>
               </a-tooltip>
@@ -283,17 +289,17 @@ const isPending = computed(() => !emailConfigured.value || !storageConfigured.va
 }
 .tabs-menu {
   :deep(.item) {
-    @apply select-none mx-2 !px-3 !text-sm !rounded-md !mb-1 text-gray-700 !hover:(bg-gray-200 text-gray-700) font-medium;
+    @apply select-none mx-2 !px-3 !text-sm !rounded-md !mb-1 text-nc-content-gray-subtle !hover:(bg-nc-bg-gray-medium text-nc-content-gray-subtle) font-medium;
     width: calc(100% - 1rem);
   }
 
   :deep(.active) {
-    @apply !bg-brand-50 !text-brand-500 !hover:(bg-brand-50 text-brand-500) font-semibold;
+    @apply !bg-nc-bg-brand !text-nc-content-brand-disabled !hover:(bg-nc-bg-brand text-nc-content-brand-disabled ) font-semibold;
   }
 }
 
 :deep(.ant-menu-submenu-title) {
-  @apply select-none mx-2 !pl-3 !pr-1 !text-sm !rounded-md !mb-1 !hover:(bg-gray-200 text-gray-700);
+  @apply select-none mx-2 !pl-3 !pr-1 !text-sm !rounded-md !mb-1 !hover:(bg-nc-bg-gray-medium text-nc-content-gray-subtle);
   width: calc(100% - 1rem);
 
   & + ul {

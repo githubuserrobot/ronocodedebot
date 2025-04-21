@@ -3,9 +3,9 @@ import type {
   PublicAttachmentScope,
   SnapshotType,
   SupportedExportCharset,
+  SyncTrigger,
   UserType,
 } from 'nocodb-sdk';
-
 import type { NcContext, NcRequest } from '~/interface/config';
 export const JOBS_QUEUE = 'jobs';
 
@@ -17,6 +17,7 @@ export enum MigrationJobTypes {
   OrderColumnCreation = 'order-column-creation',
   NoOpMigration = 'no-op-migration',
   RecoverOrderColumnMigration = 'recover-order-column-migration',
+  RecoverDisconnectedTableNames = 'recover-disconnected-table-names',
 }
 
 export enum JobTypes {
@@ -41,6 +42,9 @@ export enum JobTypes {
   UseWorker = 'use-worker',
   CreateSnapshot = 'create-snapshot',
   RestoreSnapshot = 'restore-snapshot',
+  ListenImport = 'listen-import',
+  SyncModuleSyncData = 'sync-module-sync-data',
+  SubscriptionSchedule = 'subscription-schedule',
 }
 
 export const SKIP_STORING_JOB_META = [
@@ -52,6 +56,7 @@ export const SKIP_STORING_JOB_META = [
   JobTypes.UpdateModelStat,
   JobTypes.UpdateWsStat,
   JobTypes.UpdateSrcStat,
+  JobTypes.SubscriptionSchedule,
 ];
 
 export enum JobStatus {
@@ -205,4 +210,10 @@ export interface CacheWarmingJobData extends JobData {
   viewId: string;
   cacheSize: number;
   refreshInterval: number;
+}
+
+export interface SyncDataSyncModuleJobData extends JobData {
+  syncConfigId: string;
+  trigger: SyncTrigger;
+  req: NcRequest;
 }

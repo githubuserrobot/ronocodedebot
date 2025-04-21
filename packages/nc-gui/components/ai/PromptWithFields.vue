@@ -5,8 +5,8 @@ import Mention from '@tiptap/extension-mention'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import tippy from 'tippy.js'
 import { type ColumnType, UITypes } from 'nocodb-sdk'
-import FieldList from '~/helpers/tiptapExtensions/mention/FieldList'
-import suggestion from '~/helpers/tiptapExtensions/mention/suggestion.ts'
+import { suggestion } from '~/helpers/tiptap'
+import { FieldMentionList } from '~/helpers/tiptap-markdown/extensions'
 
 const props = withDefaults(
   defineProps<{
@@ -17,6 +17,7 @@ const props = withDefaults(
     suggestionIconClassName?: string
     placeholder?: string
     readOnly?: boolean
+    markdown?: boolean
   }>(),
   {
     options: () => [],
@@ -29,10 +30,11 @@ const props = withDefaults(
      */
     placeholder: 'Write your prompt here...',
     readOnly: false,
+    markdown: true,
   },
 )
 
-const emits = defineEmits(['update:modelValue'])
+const emits = defineEmits(['update:modelValue', 'keydown'])
 
 const vModel = computed({
   get: () => props.modelValue,
@@ -47,6 +49,7 @@ const debouncedLoadMentionFieldTagTooltip = useDebounceFn(loadMentionFieldTagToo
 
 const editor = useEditor({
   content: vModel.value,
+  enableInputRules: props.markdown,
   extensions: [
     StarterKit.configure({
       heading: false,
@@ -57,7 +60,7 @@ const editor = useEditor({
     }),
     Mention.configure({
       suggestion: {
-        ...suggestion(FieldList),
+        ...suggestion(FieldMentionList),
         items: ({ query }) => {
           if (query.length === 0) return props.options ?? []
           return (
@@ -77,7 +80,7 @@ const editor = useEditor({
           'span',
           {
             'class': `prompt-field-tag ${isAttachment ? '!bg-green-200' : ''} ${props.promptFieldTagClassName}`,
-            'style': 'max-width: 100px; white-space: nowrap; overflow: hidden; display: inline-block; text-overflow: ellipsis;', // Enforces truncation
+            'style': 'max-width: 200px; white-space: nowrap; overflow: hidden; display: inline-block; text-overflow: ellipsis;', // Enforces truncation
             'data-tooltip': node.attrs.id, // Tooltip content
           },
           `${node.attrs.id}`,
@@ -185,11 +188,31 @@ onBeforeUnmount(() => {
   tooltipInstances.forEach((instance) => instance?.destroy())
   tooltipInstances.length = 0
 })
+
+const el = useCurrentElement()
+
+// listen to custom event for setting the focus via event dispatching from
+// outside the component where there's no access to editor and its apis
+useEventListener(el, 'focusPromptWithFields', () => {
+  setTimeout(() => {
+    editor.value
+      ?.chain()
+      .focus()
+      .setTextSelection(vModel.value.length * 2)
+      .run()
+  }, 100)
+})
 </script>
 
 <template>
   <div class="nc-ai-prompt-with-fields w-full">
-    <EditorContent ref="editorDom" :editor="editor" @keydown.alt.enter.stop @keydown.shift.enter.stop />
+    <EditorContent
+      ref="editorDom"
+      :editor="editor"
+      @keydown="$emit('keydown', $event)"
+      @keydown.alt.enter.stop
+      @keydown.shift.enter.stop
+    />
 
     <NcButton
       size="xs"

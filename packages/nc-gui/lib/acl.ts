@@ -37,7 +37,6 @@ const rolePermissions = {
       tableRename: true,
       tableDelete: true,
       viewCreateOrEdit: true,
-      baseReorder: true,
       orgAdminPanel: true,
       workspaceAuditList: true,
       workspaceIntegrations: true,
@@ -54,6 +53,7 @@ const rolePermissions = {
     include: {
       baseDelete: true,
       manageSnapshot: true,
+      migrateBase: true,
     },
   },
   [ProjectRoles.CREATOR]: {
@@ -89,6 +89,8 @@ const rolePermissions = {
       baseDuplicate: true,
       sourceCreate: true,
       baseAuditList: true,
+
+      extensionList: true,
     },
   },
   [ProjectRoles.EDITOR]: {

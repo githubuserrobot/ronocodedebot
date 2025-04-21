@@ -1,4 +1,4 @@
-import { UITypes } from 'nocodb-sdk'
+import { ColumnHelper, UITypes } from 'nocodb-sdk'
 import type { WritableComputedRef } from '@vue/reactivity'
 import type { RuleObject } from 'ant-design-vue/es/form'
 import { AiWizardTabsType, type PredictedFieldType } from '#imports'
@@ -14,6 +14,8 @@ const useForm = Form.useForm
 
 export const usePredictFields = createSharedComposable(
   (isFromTableExplorer?: Ref<boolean>, fields?: WritableComputedRef<Record<string, any>[]>) => {
+    const { $e } = useNuxtApp()
+
     const { t } = useI18n()
 
     const { aiLoading, aiError, predictNextFields: _predictNextFields, predictNextFormulas, predictNextButtons } = useNocoAi()
@@ -62,6 +64,10 @@ export const usePredictFields = createSharedComposable(
         activeAiTabLocal.value = value
 
         aiError.value = ''
+
+        if (aiMode.value) {
+          $e(`c:column:ai:tab-change:${value}`)
+        }
       },
     })
 
@@ -190,9 +196,7 @@ export const usePredictFields = createSharedComposable(
         column_name: field.title.toLowerCase().replace(/\\W/g, '_'),
         ...(field.formula ? { formula_raw: field.formula } : {}),
         ...(field.colOptions ? { colOptions: field.colOptions } : {}),
-        meta: {
-          ...(field.type in columnDefaultMeta ? columnDefaultMeta[field.type as keyof typeof columnDefaultMeta] : {}),
-        },
+        meta: ColumnHelper.getColumnDefaultMeta(field.type),
         description: field?.description || null,
         is_ai_field: true,
         ai_temp_id: field.ai_temp_id,
@@ -262,11 +266,17 @@ export const usePredictFields = createSharedComposable(
     }
 
     const disableAiMode = () => {
+      $e('c:column:ai:toggle:false', {
+        mode: fieldPredictionMode.value,
+      })
+
       onInit()
     }
 
     const predictMore = async () => {
       calledFunction.value = 'predictMore'
+
+      $e('a:column:ai:predict-more')
 
       const predictions = await predictNextFields()
 
@@ -280,6 +290,8 @@ export const usePredictFields = createSharedComposable(
 
     const predictRefresh = async (callback?: (field?: PredictedFieldType | undefined) => void) => {
       calledFunction.value = 'predictRefresh'
+
+      $e('a:column:ai:predict-refresh')
 
       const predictions = await predictNextFields()
 
@@ -303,6 +315,10 @@ export const usePredictFields = createSharedComposable(
 
     const predictFromPrompt = async (callback?: (field?: PredictedFieldType | undefined) => void) => {
       calledFunction.value = 'predictFromPrompt'
+
+      $e('a:column:ai:predict-from-prompt', {
+        prompt: prompt.value,
+      })
 
       const predictions = await predictNextFields()
 
@@ -492,6 +508,10 @@ export const usePredictFields = createSharedComposable(
       }
     }
     const toggleAiMode = async (mode: 'field' | 'button' | 'formula' = 'field', fromFieldModal = false) => {
+      $e('c:column:ai:toggle:true', {
+        mode,
+      })
+
       if (mode === 'formula') {
         fieldPredictionMode.value = 'formula'
       } else if (mode === 'button') {

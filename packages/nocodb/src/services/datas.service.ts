@@ -225,6 +225,7 @@ export class DatasService {
       apiVersion?: NcApiVersion;
       includeSortAndFilterColumns?: boolean;
       includeRowColorColumns?: boolean;
+      ignoreCache?: boolean;
     },
   ) {
     const {

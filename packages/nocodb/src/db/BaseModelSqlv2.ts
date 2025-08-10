@@ -136,8 +136,6 @@ dayjs.extend(utc);
 
 dayjs.extend(timezone);
 
-const GROUP_COL = '__nc_group_id';
-
 const logger = new Logger('BaseModelSqlv2');
 
 const JSON_COLUMN_TYPES = [UITypes.Button];
@@ -145,17 +143,6 @@ const JSON_COLUMN_TYPES = [UITypes.Button];
 const ORDER_STEP_INCREMENT = 1;
 
 const MAX_RECURSION_DEPTH = 2;
-export async function populatePk(
-  context: NcContext,
-  model: Model,
-  insertObj: any,
-) {
-  await model.getColumns(context);
-  for (const pkCol of model.primaryKeys) {
-    if (!pkCol.meta?.ag || insertObj[pkCol.title]) continue;
-    insertObj[pkCol.title] =
-      pkCol.meta?.ag === 'nc' ? `rc_${nanoidv2()}` : uuidv4();
-  }
 
 /**
  * Base class for models
@@ -165,7 +152,7 @@ export async function populatePk(
  */
 class BaseModelSqlv2 implements IBaseModelSqlV2 {
   protected _dbDriver: XKnex;
-  protected viewId: string;
+  public viewId: string;
   protected _proto: any;
   protected _columns = {};
   protected source: Source;
@@ -192,7 +179,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }) {
     this._dbDriver = dbDriver;
     this.model = model;
-    this._viewId = viewId;
+    this.viewId = viewId;
     this.context = context;
     this.schema = schema;
     autoBind(this);
@@ -634,6 +621,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       throwErrorIfInvalidParams?: boolean;
       limitOverride?: number;
       skipSubstitutingColumnIds?: boolean;
+      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {
@@ -1421,7 +1409,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       colId: string; ids: any[],
       columnName: string
     },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean } = {},
   ) {
     try {
       // skip duplicate id
@@ -1513,7 +1501,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   @trace()
   public async mmList(
-    { colId, parentId },
+    { colId, parentId, apiVersion, nested = false }: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
     selectAllRecords = false,
   ) {
@@ -1650,7 +1643,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async hmList(
-    { colId, id },
+    { colId, id, apiVersion, nested = false }: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
     args: { limit?; offset?; fieldSet?: Set<string> } = {},
   ) {
     try {
@@ -1766,13 +1764,13 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             .where(_wherePk(parentTable.primaryKeys, id)),
         );
       const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-      const filterObj = extractFilterFromXwhere(where, aliasColObjMap);
+      const filterObj = extractFilterFromXwhere(this.context, where, aliasColObjMap);
 
       await conditionV2(
         this,
         [
           new Filter({
-            children: filterObj,
+            children: filterObj.filters,
             is_group: true,
             logical_op: 'and',
           }),
@@ -1787,116 +1785,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      ids: any[];
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
-      param,
-      args,
-    );
-  }
 
-  public async mmList(
-    param: {
-      colId: string;
-      parentId: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-    selectAllRecords = false,
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).mmList(
-      param,
-      args,
-      selectAllRecords,
-    );
-  }
-
-  async multipleHmListCount({ colId, ids }) {
-    return relationDataFetcher({
-      baseModel: this,
-      logger,
-    }).multipleHmListCount({
-      colId,
-      ids,
-    });
-  }
-
-  async hmList(
-    param: {
-      colId: string;
-      id: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
-  }
-
-  async hmListCount({ colId, id }, args) {
-    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
-      { colId, id },
-      args,
-    );
-  }
-
-
-  public async mmList(
-    param: {
-      colId: string;
-      parentId: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
-    selectAllRecords = false,
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).mmList(
-      param,
-      args,
-      selectAllRecords,
-    );
-  }
-
-  async multipleHmListCount({ colId, ids }) {
-    return relationDataFetcher({
-      baseModel: this,
-      logger,
-    }).multipleHmListCount({
-      colId,
-      ids,
-    });
-  }
-
-  async hmList(
-    param: {
-      colId: string;
-      id: any;
-      apiVersion?: NcApiVersion;
-      nested?: boolean;
-    },
-    args: { limit?; offset?; fieldSet?: Set<string> } = {},
-  ) {
-    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
-  }
-
-  async hmListCount({ colId, id }, args) {
-    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
-      { colId, id },
-      args,
-    );
-  }
 
   public async multipleMmList(
     param: {
@@ -2239,6 +2128,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                           {
                             parentIds: ids,
                             colId: column.id,
+                            apiVersion,
+                            nested: true,
                           },
                           (listLoader as any).args,
                         );
@@ -2458,9 +2349,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                     async (ids: string[]) => {
                       if (ids.length > 1) {
                         var args = (listLoader as any).args ?? []
-                        if (options != null ){
-                          args["ignoreCache"] = options.ignoreCache ?? false
-                        }
+                        args["ignoreCache"] = ignoreCache
                         const data = await this.multipleHmList(
                           {
                             colId: column.id,
@@ -5906,6 +5795,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       first?: boolean;
       bulkAggregate?: boolean;
       apiVersion?: NcApiVersion;
+      ignoreCache?: boolean;
     } = {
       skipDateConversion: false,
       skipAttachmentConversion: false,
@@ -5916,6 +5806,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       first: false,
       bulkAggregate: false,
       apiVersion: NcApiVersion.V2,
+      ignoreCache: false,
     },
   ) {
     if (options.raw) {
@@ -6882,7 +6773,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     cookie?: { user?: any };
     model?: Model;
     knex?: XKnex;
-    baseModel?: BaseModelSqlv2;
+    baseModel?: IBaseModelSqlV2;
   }) {
     const columns = await model.getColumns(this.context);
 

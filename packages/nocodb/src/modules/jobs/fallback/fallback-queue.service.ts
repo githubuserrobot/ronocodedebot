@@ -1,7 +1,7 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import PQueue from 'p-queue';
 import Emittery from 'emittery';
-import { CronExpressionParser } from 'cron-parser';
+import { parseExpression } from 'cron-parser';
 import { JobsEventService } from '~/modules/jobs/jobs-event.service';
 import { JobStatus } from '~/interface/Jobs';
 import { JobsMap } from '~/modules/jobs/jobs-map.service';
@@ -163,7 +163,7 @@ export class QueueService {
       // Initialize recurring job execution based on cron pattern
       const scheduleNextExecution = () => {
         try {
-          const cron = CronExpressionParser.parse(opts.repeat.cron);
+          const cron = parseExpression(opts.repeat.cron);
           const nextExecutionTime = cron.next().toDate();
           const delayMs = Math.max(0, nextExecutionTime.getTime() - Date.now());
 

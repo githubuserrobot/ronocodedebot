@@ -230,3 +230,7 @@ export interface SyncDataSyncModuleJobData extends JobData {
 }
 
 export type AttachmentUrlUploadJobData = AttachmentUrlUploadParam & JobData;
+
+export interface CacheWarmingJobData extends JobData {
+  // Cache warming job data - currently uses no specific parameters
+}

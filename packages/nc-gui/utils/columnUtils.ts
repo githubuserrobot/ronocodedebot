@@ -1,6 +1,16 @@
 import type { FunctionalComponent, SVGAttributes } from 'vue'
 import type { ButtonType, ColumnType, FormulaType, IntegrationType, LinkToAnotherRecordType } from 'nocodb-sdk'
-import { ButtonActionsType, RelationTypes, UITypes, LongTextAiMetaProp as _LongTextAiMetaProp } from 'nocodb-sdk'
+import {
+  ButtonActionsType,
+  RelationTypes,
+  UITypes,
+  LongTextAiMetaProp as _LongTextAiMetaProp,
+  checkboxIconList,
+  isValidURL,
+  ratingIconList,
+  validateEmail,
+} from 'nocodb-sdk'
+import isMobilePhone from 'validator/lib/isMobilePhone'
 
 export interface UiTypesType {
   name: UITypes | string
@@ -39,7 +49,7 @@ const uiTypes: UiTypesType[] = [
     name: UITypes.LinkToAnotherRecord,
     icon: iconMap.cellLinks,
     virtual: 1,
-    deprecated: 1,
+    deprecated: 0,
   },
   {
     name: UITypes.Lookup,
@@ -252,6 +262,7 @@ const isTypableInputColumn = (colOrUidt: ColumnType | UITypes) => {
     UITypes.JSON,
     UITypes.URL,
     UITypes.SpecificDBType,
+    UITypes.Geometry,
   ].includes(uidt)
 }
 
@@ -269,11 +280,12 @@ const isColumnSupportsGroupBySettings = (colOrUidt: ColumnType) => {
 const isColumnInvalid = (
   col: ColumnType,
   aiIntegrations: Partial<IntegrationType>[] = [],
-  isReadOnly: boolean = false,
-): { isInvalid: boolean; tooltip: string } => {
+  isReadOnly = false,
+): { isInvalid: boolean; tooltip: string; ignoreTooltip?: boolean } => {
   const result = {
     isInvalid: false,
     tooltip: 'msg.invalidColumnConfiguration',
+    ignoreTooltip: false,
   }
 
   switch (col.uidt) {
@@ -282,11 +294,15 @@ const isColumnInvalid = (
       break
     case UITypes.Button: {
       const colOptions = col.colOptions as ButtonType
-      if (colOptions.type === ButtonActionsType.Webhook) {
+
+      if (isAiButton(col) && isReadOnly) {
+        result.isInvalid = true
+        result.ignoreTooltip = true
+      } else if (colOptions.type === ButtonActionsType.Webhook) {
         result.isInvalid = !colOptions.fk_webhook_id
       } else if (colOptions.type === ButtonActionsType.Url) {
         result.isInvalid = !!colOptions.error
-      } else if (colOptions.type === ButtonActionsType.Ai) {
+      } else if (colOptions.type === ButtonActionsType.AI) {
         result.isInvalid =
           !colOptions.fk_integration_id ||
           (isReadOnly
@@ -316,59 +332,6 @@ const isColumnInvalid = (
 }
 
 // cater existing v1 cases
-const checkboxIconList = [
-  {
-    checked: 'mdi-check-bold',
-    unchecked: 'mdi-crop-square',
-  },
-  {
-    checked: 'mdi-check-circle-outline',
-    unchecked: 'mdi-checkbox-blank-circle-outline',
-  },
-  {
-    checked: 'mdi-star',
-    unchecked: 'mdi-star-outline',
-  },
-  {
-    checked: 'mdi-heart',
-    unchecked: 'mdi-heart-outline',
-  },
-  {
-    checked: 'mdi-moon-full',
-    unchecked: 'mdi-moon-new',
-  },
-  {
-    checked: 'mdi-thumb-up',
-    unchecked: 'mdi-thumb-up-outline',
-  },
-  {
-    checked: 'mdi-flag',
-    unchecked: 'mdi-flag-outline',
-  },
-]
-
-const ratingIconList = [
-  {
-    full: 'mdi-star',
-    empty: 'mdi-star-outline',
-  },
-  {
-    full: 'mdi-heart',
-    empty: 'mdi-heart-outline',
-  },
-  {
-    full: 'mdi-moon-full',
-    empty: 'mdi-moon-new',
-  },
-  {
-    full: 'mdi-thumb-up',
-    empty: 'mdi-thumb-up-outline',
-  },
-  {
-    full: 'mdi-flag',
-    empty: 'mdi-flag-outline',
-  },
-]
 
 function extractCheckboxIcon(meta: string | Record<string, any> = null) {
   const parsedMeta = parseProp(meta)
@@ -421,6 +384,38 @@ const formViewHiddenColTypes = [
   AIButton,
 ]
 
+const columnToValidate = [UITypes.Email, UITypes.URL, UITypes.PhoneNumber]
+
+const getColumnValidationError = (column: ColumnType, value?: any) => {
+  if (!columnToValidate.includes(column.uidt as UITypes) || !parseProp(column.meta)?.validate) return ''
+  let cdfValue: any = column.cdf
+  if (!ncIsUndefined(value)) {
+    cdfValue = value
+  }
+
+  switch (column.uidt) {
+    case UITypes.URL: {
+      if (!cdfValue?.trim() || isValidURL(cdfValue?.trim())) return ''
+
+      return 'msg.error.invalidURL'
+    }
+    case UITypes.Email: {
+      if (!cdfValue || validateEmail(cdfValue)) return ''
+
+      return 'msg.error.invalidEmail'
+    }
+    case UITypes.PhoneNumber: {
+      if (!cdfValue || isMobilePhone(cdfValue)) return ''
+
+      return 'msg.invalidPhoneNumber'
+    }
+
+    default: {
+      return ''
+    }
+  }
+}
+
 export {
   uiTypes,
   isTypableInputColumn,
@@ -436,4 +431,6 @@ export {
   extractCheckboxIcon,
   extractRatingIcon,
   formViewHiddenColTypes,
+  columnToValidate,
+  getColumnValidationError,
 }

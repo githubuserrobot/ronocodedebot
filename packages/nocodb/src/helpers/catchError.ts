@@ -1,7 +1,7 @@
-import { NcErrorType } from 'nocodb-sdk';
+import { HigherPlan, NcErrorType } from 'nocodb-sdk';
 import { Logger } from '@nestjs/common';
 import { generateReadablePermissionErr } from 'src/utils/acl';
-import type { BaseType, SourceType } from 'nocodb-sdk';
+import type { BaseType, PlanTitles, SourceType } from 'nocodb-sdk';
 import type { ErrorObject } from 'ajv';
 import { defaultLimitConfig } from '~/helpers/extractLimitAndOffset';
 
@@ -275,6 +275,9 @@ export function extractDBError(error): {
     case '22001':
       message = 'The data entered is too long for this field.';
       break;
+    case '22007':
+      message = 'The date / time value is invalid';
+      break;
     case '28000':
       message = 'You do not have permission to perform this action.';
       break;
@@ -305,22 +308,35 @@ export function extractDBError(error): {
     case '22P02': // PostgreSQL invalid_text_representation
     case '22003': // PostgreSQL numeric_value_out_of_range
       if (error.message) {
-        const pgTypeMismatchMatch = error.message.match(
+        const regexCandidates = [
           /invalid input syntax for (\w+): "(.+)"(?: in column "(\w+)")?/i,
-        );
-        if (pgTypeMismatchMatch) {
-          const dataType = pgTypeMismatchMatch[1];
-          const invalidValue = pgTypeMismatchMatch[2];
-          const columnName = pgTypeMismatchMatch[3] || 'unknown';
+          /invalid input syntax for type (\w+): "([^"]+)"?/i,
+        ];
 
-          message = `Invalid ${dataType} value '${invalidValue}' for column '${columnName}'`;
-          _type = DBError.DATA_TYPE_MISMATCH;
-          _extra = { dataType, column: columnName, value: invalidValue };
-        } else {
+        let matched = false;
+        for (const regExp of regexCandidates) {
+          const pgTypeMismatchMatch = error.message.match(regExp);
+          if (pgTypeMismatchMatch) {
+            const dataType = pgTypeMismatchMatch[1];
+            const invalidValue = pgTypeMismatchMatch[2];
+            const columnName = pgTypeMismatchMatch[3] || 'unknown';
+
+            message = `Invalid ${dataType} value '${invalidValue}' for column '${columnName}'`;
+            _type = DBError.DATA_TYPE_MISMATCH;
+            _extra = { dataType, column: columnName, value: invalidValue };
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
           const detailMatch = error.detail
             ? error.detail.match(/Column (\w+)/)
             : null;
-          const columnName = detailMatch ? detailMatch[1] : 'unknown';
+
+          const columnName =
+            detailMatch?.[1] ??
+            error.message.match(/ set\s+"([^"]+)"/)?.[1] ??
+            'unknown';
           message = `Invalid data type or value for column '${columnName}'.`;
           _type = DBError.DATA_TYPE_MISMATCH;
           _extra = { column: columnName };
@@ -490,6 +506,32 @@ export class ExternalTimeout extends ExternalError {}
 
 export class UnprocessableEntity extends NcBaseError {}
 
+export class OptionsNotExistsError extends BadRequest {
+  constructor({
+    columnTitle,
+    options,
+    validOptions,
+  }: {
+    columnTitle: string;
+    options: string[];
+    validOptions: string[];
+  }) {
+    super(
+      `Invalid option(s) "${options.join(
+        ', ',
+      )}" provided for column "${columnTitle}". Valid options are "${validOptions.join(
+        ', ',
+      )}"`,
+    );
+    this.columnTitle = columnTitle;
+    this.options = options;
+    this.validOptions = validOptions;
+  }
+  columnTitle: string;
+  options: string[];
+  validOptions: string[];
+}
+
 export class TestConnectionError extends NcBaseError {
   public sql_code?: string;
 
@@ -500,9 +542,15 @@ export class TestConnectionError extends NcBaseError {
 }
 
 export class AjvError extends NcBaseError {
-  constructor(param: { message: string; errors: ErrorObject[] }) {
+  humanReadableError: boolean;
+  constructor(param: {
+    message: string;
+    errors: ErrorObject[];
+    humanReadableError?: boolean;
+  }) {
     super(param.message);
     this.errors = param.errors;
+    this.humanReadableError = param.humanReadableError || false;
   }
 
   errors: ErrorObject[];
@@ -608,6 +656,10 @@ const errorHelpers: {
     message: (offset: string) => `Offset value '${offset}' is invalid`,
     code: 422,
   },
+  [NcErrorType.INVALID_PAGE_VALUE]: {
+    message: (page: string) => `Page value '${page}' is invalid`,
+    code: 422,
+  },
   [NcErrorType.INVALID_PK_VALUE]: {
     message: (value: any, pkColumn: string) =>
       `Primary key value '${value}' is invalid for column '${pkColumn}'`,
@@ -657,6 +709,10 @@ const errorHelpers: {
     },
     code: 400,
   },
+  [NcErrorType.FORMULA_CIRCULAR_REF_ERROR]: {
+    message: 'Circular reference detected in formula',
+    code: 400,
+  },
   [NcErrorType.PERMISSION_DENIED]: {
     message: 'Permission denied',
     code: 403,
@@ -664,6 +720,18 @@ const errorHelpers: {
   [NcErrorType.INVALID_ATTACHMENT_UPLOAD_SCOPE]: {
     message: 'Invalid attachment upload scope',
     code: 400,
+  },
+  [NcErrorType.REORDER_FAILED]: {
+    message: 'Reorder failed',
+    code: 400,
+  },
+  [NcErrorType.CANNOT_CALCULATE_INTERMEDIATE_ORDER]: {
+    message: 'Cannot calculate intermediate order',
+    code: 400,
+  },
+  [NcErrorType.PLAN_LIMIT_EXCEEDED]: {
+    message: (message: string) => message || 'Plan limit exceeded',
+    code: 403,
   },
 };
 
@@ -886,6 +954,12 @@ export class NcError {
       ...args,
     });
   }
+  static invalidPageValue(page: string | number, args?: NcErrorArgs) {
+    throw new NcBaseErrorv2(NcErrorType.INVALID_PAGE_VALUE, {
+      params: `${page}`,
+      ...args,
+    });
+  }
 
   static invalidPrimaryKey(value: any, pkColumn: string, args?: NcErrorArgs) {
     throw new NcBaseErrorv2(NcErrorType.INVALID_PK_VALUE, {
@@ -941,6 +1015,13 @@ export class NcError {
     });
   }
 
+  static formulaCircularRefError(message: string, args?: NcErrorArgs) {
+    throw new NcBaseErrorv2(NcErrorType.FORMULA_CIRCULAR_REF_ERROR, {
+      params: message,
+      ...args,
+    });
+  }
+
   static notFound(message = 'Not found') {
     throw new NotFound(message);
   }
@@ -957,7 +1038,11 @@ export class NcError {
     throw new Forbidden(message);
   }
 
-  static ajvValidationError(param: { message: string; errors: ErrorObject[] }) {
+  static ajvValidationError(param: {
+    message: string;
+    errors: ErrorObject[];
+    humanReadableError: boolean;
+  }) {
     throw new AjvError(param);
   }
 
@@ -998,6 +1083,17 @@ export class NcError {
     });
   }
 
+  static cannotCalculateIntermediateOrderError() {
+    throw new NcBaseErrorv2(
+      NcErrorType.CANNOT_CALCULATE_INTERMEDIATE_ORDER,
+      {},
+    );
+  }
+
+  static reorderFailed() {
+    throw new NcBaseErrorv2(NcErrorType.REORDER_FAILED, {});
+  }
+
   static integrationLinkedWithMultiple(
     bases: BaseType[],
     sources: SourceType[],
@@ -1026,5 +1122,32 @@ export class NcError {
 
   static invalidAttachmentUploadScope(args?: NcErrorArgs) {
     throw new NcBaseErrorv2(NcErrorType.INVALID_ATTACHMENT_UPLOAD_SCOPE, args);
+  }
+
+  static optionsNotExists(props: {
+    columnTitle: string;
+    options: string[];
+    validOptions: string[];
+  }) {
+    throw new OptionsNotExistsError(props);
+  }
+
+  static planLimitExceeded(
+    message: string,
+    details: {
+      plan?: PlanTitles;
+      limit?: number;
+      current?: number;
+    },
+    args?: NcErrorArgs,
+  ) {
+    throw new NcBaseErrorv2(NcErrorType.PLAN_LIMIT_EXCEEDED, {
+      params: message,
+      ...args,
+      details: {
+        ...details,
+        ...(details?.plan ? { higherPlan: HigherPlan[details.plan] } : {}),
+      },
+    });
   }
 }

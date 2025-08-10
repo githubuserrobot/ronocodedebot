@@ -40,6 +40,9 @@ export class DataAliasController {
     @Param('tableName') tableName: string,
     @Param('viewName') viewName: string,
     @Query('opt') opt: string,
+    @Query('getHiddenColumns') getHiddenColumns: string,
+    @Query('includeSortAndFilterColumns')
+    includeSortAndFilterColumns: string,
   ) {
     const startTime = process.hrtime();
     const responseData = await this.datasService.dataList(context, {
@@ -48,6 +51,8 @@ export class DataAliasController {
       tableName: tableName,
       viewName: viewName,
       disableOptimization: opt === 'false',
+      getHiddenColumns: getHiddenColumns === 'true',
+      includeSortAndFilterColumns: includeSortAndFilterColumns === 'true',
     });
     const elapsedMilliSeconds = parseHrtimeToMilliSeconds(
       process.hrtime(startTime),
@@ -137,6 +142,8 @@ export class DataAliasController {
     @Param('viewName') viewName: string,
     @Body() body: any,
     @Query('opt') opt: string,
+    @Query('before') before: string,
+    @Query('undo') undo: string,
   ) {
     return await this.datasService.dataInsert(context, {
       baseName: baseName,
@@ -145,6 +152,10 @@ export class DataAliasController {
       body: body,
       cookie: req,
       disableOptimization: opt === 'false',
+      query: {
+        before,
+        undo: undo === 'true',
+      },
     });
   }
 
@@ -208,7 +219,7 @@ export class DataAliasController {
     @Param('viewName') viewName: string,
     @Param('rowId') rowId: string,
     @Query('opt') opt: string,
-    @Query('getHiddenColumn') getHiddenColumn: boolean,
+    @Query('getHiddenColumn') getHiddenColumn: string,
   ) {
     return await this.datasService.dataRead(context, {
       baseName: baseName,
@@ -217,7 +228,7 @@ export class DataAliasController {
       rowId: rowId,
       query: req.query,
       disableOptimization: opt === 'false',
-      getHiddenColumn: getHiddenColumn,
+      getHiddenColumn: getHiddenColumn === 'true',
     });
   }
 

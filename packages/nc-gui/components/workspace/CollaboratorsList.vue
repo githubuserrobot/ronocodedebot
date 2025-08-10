@@ -3,6 +3,7 @@ import { OrderedWorkspaceRoles, WorkspaceUserRoles } from 'nocodb-sdk'
 
 const props = defineProps<{
   workspaceId?: string
+  height?: string
 }>()
 
 const { workspaceRoles } = useRoles()
@@ -11,17 +12,15 @@ const { user } = useGlobal()
 
 const workspaceStore = useWorkspace()
 
-const { removeCollaborator, updateCollaborator: _updateCollaborator, loadWorkspace } = workspaceStore
+const { removeCollaborator, updateCollaborator: _updateCollaborator } = workspaceStore
 
 const { collaborators, activeWorkspace, workspacesList, isCollaboratorsLoading } = storeToRefs(workspaceStore)
 
 const currentWorkspace = computedAsync(async () => {
   if (props.workspaceId) {
     const ws = workspacesList.value.find((workspace) => workspace.id === props.workspaceId)
-    if (!ws) {
-      await loadWorkspace(props.workspaceId)
-
-      return workspacesList.value.find((workspace) => workspace.id === props.workspaceId)
+    if (ws) {
+      return ws
     }
   }
   return activeWorkspace.value ?? workspacesList.value[0]
@@ -82,7 +81,7 @@ const updateCollaborator = async (collab: any, roles: WorkspaceUserRoles) => {
 
   const res = await _updateCollaborator(collab.id, roles, currentWorkspace.value.id)
   if (!res) return
-  message.success('Successfully updated user role')
+  message.success(t('msg.info.userRoleUpdated'))
 
   collaborators.value?.forEach((collaborator) => {
     if (collaborator.id === collab.id) {
@@ -175,11 +174,12 @@ const isDeleteOrUpdateAllowed = (user) => {
 
 <template>
   <div
-    class="nc-collaborator-table-container py-6 max-w-350 px-6 flex flex-col gap-6"
+    class="nc-collaborator-table-container py-6 nc-content-max-w px-6 flex flex-col gap-6"
     :class="{
-      'h-[calc(100vh-144px)]': isAdminPanel,
-      'h-[calc(100vh-92px)]': !isAdminPanel,
+      'h-[calc(100%-144px)]': !height && isAdminPanel,
+      'h-[calc(100%-92px)]': !height && !isAdminPanel,
     }"
+    :style="`${height ? `height: ${height}` : ''}`"
   >
     <div class="w-full flex items-center justify-between gap-3">
       <a-input
@@ -187,7 +187,7 @@ const isDeleteOrUpdateAllowed = (user) => {
         allow-clear
         :disabled="isCollaboratorsLoading"
         class="nc-input-border-on-value !max-w-90 !h-8 !px-3 !py-1 !rounded-lg"
-        placeholder="Search members"
+        :placeholder="$t('title.searchMembers')"
       >
         <template #prefix>
           <GeneralIcon icon="search" class="mr-2 h-4 w-4 text-gray-500 group-hover:text-black" />
@@ -291,8 +291,7 @@ const isDeleteOrUpdateAllowed = (user) => {
                   </template>
                   <NcTooltip :disabled="!isOnlyOneOwner || record.roles !== WorkspaceUserRoles.OWNER">
                     <template #title>
-                      Each workspace must have at least one owner. Please assign another user as the Owner before leaving the
-                      workspace. If you are the last member, consider deleting the workspace instead.
+                      {{ $t('tooltip.leaveWorkspace') }}
                     </template>
                     <NcMenuItem
                       :disabled="!isDeleteOrUpdateAllowed(record)"
@@ -300,7 +299,7 @@ const isDeleteOrUpdateAllowed = (user) => {
                       @click="removeCollaborator(record.id, currentWorkspace?.id)"
                     >
                       <MaterialSymbolsDeleteOutlineRounded />
-                      {{ record.id === user.id ? 'Leave workspace' : 'Remove user' }}
+                      {{ record.id === user.id ? t('activity.leaveWorkspace') : t('activity.removeUser') }}
                     </NcMenuItem>
                   </NcTooltip>
                 </NcMenu>

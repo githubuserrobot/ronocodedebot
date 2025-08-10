@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { diff } from 'deep-object-diff'
-import { message } from 'ant-design-vue'
 import {
   ButtonActionsType,
+  ColumnHelper,
   UITypes,
   isAIPromptCol,
   isLinksOrLTAR,
@@ -106,7 +106,13 @@ const visibilityOps = ref<fieldsVisibilityOps[]>([])
 
 const fieldsListWrapperDomRef = ref<HTMLElement>()
 
-const { fields: viewFields, toggleFieldVisibility, loadViewColumns, isViewColumnsLoading } = useViewColumnsOrThrow()
+const {
+  fields: viewFields,
+  toggleFieldVisibility,
+  loadViewColumns,
+  isViewColumnsLoading,
+  showSystemFields,
+} = useViewColumnsOrThrow()
 
 const loading = ref(false)
 
@@ -147,12 +153,18 @@ const getFieldOrder = (field?: TableExplorerColumn) => {
   return -1
 }
 
+const showOrHideSystemFields = ref(showSystemFields.value)
+
 const fields = computed<TableExplorerColumn[]>({
   get: () => {
     const x = ((localMetaColumns.value as ColumnType[]) ?? [])
       .filter((field) => {
         const isAllowToShowCol = isForm.value ? !formViewHiddenColTypes.includes(t.name) : true
-        return !field.fk_column_id && !isSystemColumn(field) && isAllowToShowCol
+        return (
+          !field.fk_column_id &&
+          (showOrHideSystemFields.value ? !!viewFieldsMap.value[field.id] : !isSystemColumn(field)) &&
+          isAllowToShowCol
+        )
       })
       .concat(newFields.value)
       .map((field) => updateDefaultColumnValues(field))
@@ -170,6 +182,15 @@ const fields = computed<TableExplorerColumn[]>({
       return col
     })
   },
+})
+
+const isAllFieldsVisible = computed(() => {
+  return fields.value.every((field) => {
+    if (visibilityOps.value.find((op) => op.column.fk_column_id === field.id)?.visible ?? viewFieldsMap.value[field.id!]?.show) {
+      return true
+    }
+    return false
+  })
 })
 
 // Current Selected Field
@@ -194,8 +215,8 @@ const {
   isFormulaPredictionMode,
   fieldPredictionMode,
   onInit,
-  toggleAiMode,
-  disableAiMode,
+  toggleAiMode: _toggleAiMode,
+  disableAiMode: _disableAiMode,
   predictMore,
   predictRefresh,
   predictFromPrompt,
@@ -271,7 +292,8 @@ const isColumnUpdateAllowed = (column: ColumnType) => {
   if (
     isMetaReadOnly.value &&
     !readonlyMetaAllowedTypes.includes(column?.uidt) &&
-    !partialUpdateAllowedTypes.includes(column?.uidt)
+    !partialUpdateAllowedTypes.includes(column?.uidt) &&
+    !isSystemColumn(column)
   )
     return false
   return true
@@ -817,6 +839,7 @@ const clearChanges = () => {
   newFields.value = []
   visibilityOps.value = []
   localPredictions.value = []
+  showOrHideSystemFields.value = showSystemFields.value
   changeField()
   onInit()
 }
@@ -825,10 +848,11 @@ const isColumnsValid = computed(() => fields.value.every((f) => isColumnValid(f)
 
 const metaToLocal = () => {
   localMetaColumns.value = meta.value?.columns?.map((c: ColumnType) => {
-    if (c.uidt && c.uidt in columnDefaultMeta) {
+    const defaultColumnMeta = c.uidt ? ColumnHelper.getColumnDefaultMeta(c.uidt as UITypes) : {}
+    if (!ncIsEmptyObject(defaultColumnMeta)) {
       if (!c.meta) c.meta = {}
       c.meta = {
-        ...columnDefaultMeta[c.uidt as keyof typeof columnDefaultMeta],
+        ...defaultColumnMeta,
         ...((c.meta as object) || {}),
       }
     }
@@ -842,7 +866,13 @@ const saveChanges = async () => {
   if (!isColumnsValid.value) {
     message.error(t('msg.error.multiFieldSaveValidation'))
     return
-  } else if (!loading.value && ops.value.length < 1 && moveOps.value.length < 1 && visibilityOps.value.length < 1) {
+  } else if (
+    !loading.value &&
+    ops.value.length < 1 &&
+    moveOps.value.length < 1 &&
+    visibilityOps.value.length < 1 &&
+    showSystemFields.value === showOrHideSystemFields.value
+  ) {
     return
   }
   try {
@@ -957,6 +987,7 @@ const saveChanges = async () => {
 
     columnsHash.value = (await $api.dbTableColumn.hash(meta.value?.id)).hash
 
+    showSystemFields.value = showOrHideSystemFields.value
     visibilityOps.value = []
   } catch (e) {
     message.error(t('msg.error.somethingWentWrong'))
@@ -970,20 +1001,30 @@ const toggleVisibility = async (checked: boolean, field: Field) => {
     message.warning(t('msg.warning.multiField.fieldVisibility'))
     return
   }
-  if (visibilityOps.value.find((op) => op.column.fk_column_id === field.fk_column_id)) {
-    visibilityOps.value = visibilityOps.value.filter((op) => op.column.fk_column_id !== field.fk_column_id)
+
+  const visibilityOpIndex = visibilityOps.value.findIndex((op) => op.column.fk_column_id === field.fk_column_id)
+
+  if (visibilityOpIndex !== -1) {
+    if (field.show === checked) {
+      visibilityOps.value = visibilityOps.value.filter((op) => op.column.fk_column_id !== field.fk_column_id)
+    } else {
+      visibilityOps.value[visibilityOpIndex]!.visible = checked
+    }
     return
   }
+
   visibilityOps.value.push({
     visible: checked,
     column: field,
   })
 }
 
+const showOrHideAllFields = (isAllFieldsVisible = false) => {
+  fields.value.forEach((f) => toggleVisibility(!isAllFieldsVisible, viewFieldsMap.value[f.id]))
+}
+
 useEventListener(document, 'keydown', async (e: KeyboardEvent) => {
   const cmdOrCtrl = isMac() ? e.metaKey : e.ctrlKey
-
-  if (isLocked.value) return
 
   if (cmdOrCtrl && e.key.toLowerCase() === 's') {
     if (openedViewsTab.value !== 'field') return
@@ -1001,14 +1042,6 @@ useEventListener(document, 'keydown', async (e: KeyboardEvent) => {
   }
 })
 
-const renderCmdOrCtrlKey = () => {
-  return isMac() ? '⌘' : 'Ctrl'
-}
-
-const renderAltOrOptlKey = () => {
-  return isMac() ? '⌥' : 'ALT'
-}
-
 onKeyDown('ArrowDown', () => {
   const index = fields.value.findIndex((f) => compareCols(f, activeField.value))
   if (index === -1) changeField(fields.value[0])
@@ -1023,7 +1056,7 @@ onKeyDown('ArrowUp', () => {
 })
 
 onKeyDown('Delete', () => {
-  if (isLocked.value || activeField.value?.pv) return
+  if (activeField.value?.pv) return
 
   if (isActiveInputElementExist()) {
     return
@@ -1036,7 +1069,7 @@ onKeyDown('Delete', () => {
 })
 
 onKeyDown('Backspace', () => {
-  if (isLocked.value || activeField.value?.pv) return
+  if (activeField.value?.pv) return
 
   if (isActiveInputElementExist()) {
     return
@@ -1061,15 +1094,11 @@ onKeyDown('ArrowRight', () => {
 const keys = useMagicKeys()
 
 whenever(keys.meta_s, () => {
-  if (isLocked.value) return
-
   if (!meta.value?.id) return
   if (openedViewsTab.value === 'field') saveChanges()
 })
 
 whenever(keys.ctrl_s, () => {
-  if (isLocked.value) return
-
   if (!meta.value?.id) return
   if (openedViewsTab.value === 'field') saveChanges()
 })
@@ -1165,9 +1194,7 @@ const onAiFieldAdd = (field: PredictedFieldType) => {
       column_name: field.title.toLowerCase().replace(/\\W/g, '_'),
       ...(field.formula ? { formula_raw: field.formula } : {}),
       ...(field.colOptions ? { colOptions: field.colOptions } : {}),
-      meta: {
-        ...(field.type in columnDefaultMeta ? columnDefaultMeta[field.type as keyof typeof columnDefaultMeta] : {}),
-      },
+      meta: ColumnHelper.getColumnDefaultMeta(field.type as UITypes),
       ...(fieldPredictionMode.value === 'button'
         ? {
             type: ButtonActionsType.Ai,
@@ -1202,6 +1229,26 @@ const handleNavigateToIntegrations = () => {
   })
 }
 
+const toggleAiMode = (...args: any[]) => {
+  _toggleAiMode(...args)
+
+  changingField.value = true
+
+  nextTick(() => {
+    changingField.value = false
+  })
+}
+
+const disableAiMode = () => {
+  _disableAiMode()
+
+  changingField.value = true
+
+  nextTick(() => {
+    changingField.value = false
+  })
+}
+
 const aiPromptInputRef = ref<HTMLElement>()
 
 watch(activeAiTab, (newValue) => {
@@ -1210,6 +1257,31 @@ watch(activeAiTab, (newValue) => {
       aiPromptInputRef.value?.focus()
     })
   }
+})
+
+const rightPanelRef = ref()
+
+const oldRightPanelWidth = ref()
+
+const { width: _rightPanelWidth } = useElementBounding(rightPanelRef)
+
+/**
+ * Tracks and computes the stable width of the right panel, accounting for transition effects.
+ *
+ * @remarks
+ * - `_rightPanelWidth` reflects the current width of the right panel reported by `useElementBounding`.
+ * - `oldRightPanelWidth` stores the last valid width to avoid using transitional `0` width values.
+ * - During transitions, `_rightPanelWidth` may initially be `0`, so `oldRightPanelWidth` ensures a consistent and reliable width value.
+ *
+ * @returns The stable width of the right panel.
+ */
+
+const rightPanelWidth = computed(() => {
+  if (_rightPanelWidth.value && _rightPanelWidth.value !== oldRightPanelWidth.value) {
+    oldRightPanelWidth.value = _rightPanelWidth.value
+  }
+
+  return oldRightPanelWidth.value
 })
 </script>
 
@@ -1226,36 +1298,56 @@ watch(activeAiTab, (newValue) => {
       </div>
       <template v-else>
         <div class="flex w-full justify-between pt-2">
-          <a-input
-            v-model:value="searchQuery"
-            data-testid="nc-field-search-input"
-            class="!h-8 !px-1 !rounded-lg !w-72"
-            :placeholder="$t('placeholder.searchFields')"
-          >
-            <template #prefix>
-              <GeneralIcon icon="search" class="mx-1 h-3.5 w-3.5 text-gray-500 group-hover:text-black" />
-            </template>
-            <template #suffix>
-              <GeneralIcon
-                v-if="searchQuery.length > 0"
-                icon="close"
-                class="mx-1 h-3.5 w-3.5 text-gray-500 group-hover:text-black"
-                data-testid="nc-field-clear-search"
-                @click="searchQuery = ''"
-              />
-            </template>
-          </a-input>
+          <div class="flex gap-2">
+            <a-input
+              v-model:value="searchQuery"
+              data-testid="nc-field-search-input"
+              class="!h-8 !px-1 !rounded-lg !w-72"
+              :placeholder="$t('placeholder.searchFields')"
+            >
+              <template #prefix>
+                <GeneralIcon icon="search" class="mx-1 h-3.5 w-3.5 text-gray-500 group-hover:text-black" />
+              </template>
+              <template #suffix>
+                <GeneralIcon
+                  v-if="searchQuery.length > 0"
+                  icon="close"
+                  class="mx-1 h-3.5 w-3.5 text-gray-500 group-hover:text-black"
+                  data-testid="nc-field-clear-search"
+                  @click="searchQuery = ''"
+                />
+              </template>
+            </a-input>
+            <NcDropdown v-if="!isLocked" :trigger="['hover']" placement="bottomRight">
+              <NcButton size="small" type="secondary" icon-only :shadow="false">
+                <template #icon>
+                  <GeneralIcon icon="threeDotVertical" class="text-xs !text-current w-4 h-4" />
+                </template>
+              </NcButton>
+              <template #overlay>
+                <NcMenu variant="small">
+                  <NcMenuItem class="!children:w-full" @click="showOrHideAllFields(isAllFieldsVisible)">
+                    {{ isAllFieldsVisible ? $t('general.hideAll') : $t('general.showAll') }}
+                    {{ $t('objects.fields').toLowerCase() }}
+                  </NcMenuItem>
+                  <NcMenuItem class="!children:w-full" @click="showOrHideSystemFields = !showOrHideSystemFields">
+                    {{ showOrHideSystemFields ? $t('title.hideSystemFields') : $t('activity.showSystemFields') }}
+                  </NcMenuItem>
+                </NcMenu>
+              </template>
+            </NcDropdown>
+          </div>
           <div class="flex gap-2">
             <template v-if="isFeatureEnabled(FEATURE_FLAG.AI_FEATURES)">
               <div class="nc-fields-add-new-field-btn-wrapper rounded-lg shadow-nc-sm">
-                <NcTooltip :disabled="isLocked">
+                <NcTooltip>
                   <template #title> {{ `${renderAltOrOptlKey()} + C` }} </template>
                   <NcButton
                     data-testid="nc-field-add-new"
                     type="secondary"
                     size="small"
                     class="nc-field-add-new !rounded-r-none !border-r-transparent"
-                    :disabled="loading || isLocked"
+                    :disabled="loading"
                     :shadow="false"
                     @click="addField()"
                   >
@@ -1314,14 +1406,14 @@ watch(activeAiTab, (newValue) => {
             </template>
             <template v-else>
               <div class="nc-fields-add-new-field-btn-wrapper shadow-sm">
-                <NcTooltip :disabled="isLocked">
+                <NcTooltip>
                   <template #title> {{ `${renderAltOrOptlKey()} + C` }} </template>
                   <NcButton
                     data-testid="nc-field-add-new"
                     type="secondary"
                     size="small"
                     class="nc-field-add-new"
-                    :disabled="loading || isLocked"
+                    :disabled="loading"
                     :shadow="false"
                     @click="addField()"
                   >
@@ -1337,12 +1429,18 @@ watch(activeAiTab, (newValue) => {
               data-testid="nc-field-reset"
               type="secondary"
               size="small"
-              :disabled="(!loading && ops.length < 1 && moveOps.length < 1 && visibilityOps.length < 1) || isLocked"
+              :disabled="
+                !loading &&
+                ops.length < 1 &&
+                moveOps.length < 1 &&
+                visibilityOps.length < 1 &&
+                showOrHideSystemFields === showSystemFields
+              "
               @click="clearChanges()"
             >
               {{ $t('general.reset') }}
             </NcButton>
-            <NcTooltip :disabled="isLocked">
+            <NcTooltip>
               <template #title> {{ `${renderCmdOrCtrlKey()} + S` }}</template>
 
               <NcButton
@@ -1351,8 +1449,13 @@ watch(activeAiTab, (newValue) => {
                 size="small"
                 :loading="loading"
                 :disabled="
-                  (isColumnsValid ? !loading && ops.length < 1 && moveOps.length < 1 && visibilityOps.length < 1 : true) ||
-                  isLocked
+                  isColumnsValid
+                    ? !loading &&
+                      showOrHideSystemFields === showSystemFields &&
+                      ops.length < 1 &&
+                      moveOps.length < 1 &&
+                      visibilityOps.length < 1
+                    : true
                 "
                 @click="saveChanges()"
               >
@@ -1368,8 +1471,13 @@ watch(activeAiTab, (newValue) => {
             height: `calc(100vh - (var(--topbar-height) * 3.6) - 24px)`,
           }"
         >
-          <div class="flex-1 h-full flex flex-col">
-            <div v-if="aiMode" class="pt-3 bg-nc-bg-gray-extralight border-b-1 border-b-nc-border-gray-medium">
+          <div
+            class="flex-1 h-full flex flex-col"
+            :style="{
+              width: rightPanelWidth ? `calc(100% - ${rightPanelWidth}px)` : undefined,
+            }"
+          >
+            <div v-if="aiMode" class="pt-3 bg-nc-bg-gray-extralight border-b-1 border-b-nc-border-gray-medium overflow-x-scroll">
               <!-- Ai field wizard  -->
               <AiWizardTabs v-model:active-tab="activeAiTab" show-close-btn @close="disableAiMode()">
                 <template #AutoSuggestedContent>
@@ -1631,8 +1739,12 @@ watch(activeAiTab, (newValue) => {
                 <template #item="{ element: field }">
                   <div
                     v-if="field.title.toLowerCase().includes(searchQuery.toLowerCase()) && !field.pv"
-                    class="flex px-2 hover:bg-gray-100 first:rounded-t-lg border-b-1 last:rounded-b-none border-gray-200 pl-5 group"
-                    :class="{ 'selected': compareCols(field, activeField), 'cursor-not-allowed': !isColumnUpdateAllowed(field) }"
+                    class="flex px-2 border-b-1 border-gray-200 pl-5 group"
+                    :class="{
+                      'selected': compareCols(field, activeField),
+                      'cursor-not-allowed': !isColumnUpdateAllowed(field),
+                      'hover:bg-gray-100': !isSystemColumn(field),
+                    }"
                     :data-testid="`nc-field-item-${fieldState(field)?.title || field.title}`"
                     @click="changeField(field, $event)"
                   >
@@ -1794,50 +1906,53 @@ watch(activeAiTab, (newValue) => {
                                   })
                                 "
                               />
-                              <NcDivider v-if="!isLocked" />
                             </template>
 
-                            <template v-if="!isLocked">
-                              <NcMenuItem
-                                key="table-explorer-duplicate"
-                                data-testid="nc-field-item-action-duplicate"
-                                @click="duplicateField(field)"
-                              >
-                                <GeneralIcon icon="duplicate" class="text-gray-800" />
-                                <span>{{ $t('general.duplicate') }} {{ $t('objects.field').toLowerCase() }}</span>
-                              </NcMenuItem>
-                              <NcMenuItem
-                                v-if="!field.pv"
-                                key="table-explorer-insert-above"
-                                data-testid="nc-field-item-action-insert-above"
-                                @click="addField(field, true)"
-                              >
-                                <GeneralIcon icon="ncArrowUp" class="text-gray-800" />
-                                <span>{{ $t('general.insertAbove') }}</span>
-                              </NcMenuItem>
-                              <NcMenuItem
-                                key="table-explorer-insert-below"
-                                data-testid="nc-field-item-action-insert-below"
-                                @click="addField(field)"
-                              >
-                                <GeneralIcon icon="ncArrowDown" class="text-gray-800" />
-                                <span>{{ $t('general.insertBelow') }}</span>
-                              </NcMenuItem>
+                            <NcMenuItem
+                              key="table-explorer-duplicate"
+                              data-testid="nc-field-item-action-duplicate"
+                              :disabled="isSystemColumn(field)"
+                              @click="duplicateField(field)"
+                            >
+                              <GeneralIcon icon="duplicate" />
+                              <span> {{ $t('general.duplicate') }} {{ $t('objects.field').toLowerCase() }} </span>
+                            </NcMenuItem>
+                            <NcMenuItem
+                              v-if="!field.pv"
+                              key="table-explorer-insert-above"
+                              data-testid="nc-field-item-action-insert-above"
+                              @click="addField(field, true)"
+                            >
+                              <GeneralIcon icon="ncArrowUp" />
+                              <span>{{ $t('general.insertAbove') }}</span>
+                            </NcMenuItem>
+                            <NcMenuItem
+                              key="table-explorer-insert-below"
+                              data-testid="nc-field-item-action-insert-below"
+                              @click="addField(field)"
+                            >
+                              <GeneralIcon icon="ncArrowDown" />
+                              <span>{{ $t('general.insertBelow') }}</span>
+                            </NcMenuItem>
 
-                              <NcDivider />
+                            <NcDivider />
 
-                              <NcMenuItem
-                                key="table-explorer-delete"
-                                class="!hover:bg-red-50"
-                                data-testid="nc-field-item-action-delete"
-                                @click="onFieldDelete(field)"
+                            <NcMenuItem
+                              key="table-explorer-delete"
+                              data-testid="nc-field-item-action-delete"
+                              :disabled="isSystemColumn(field)"
+                              @click="onFieldDelete(field)"
+                            >
+                              <div
+                                class="text-red-500"
+                                :class="{
+                                  '!text-gray-400': isSystemColumn(field),
+                                }"
                               >
-                                <div class="text-red-500">
-                                  <GeneralIcon icon="delete" class="group-hover:text-accent -ml-0.25 -mt-0.75 mr-0.5" />
-                                  {{ $t('general.delete') }} {{ $t('objects.field').toLowerCase() }}
-                                </div>
-                              </NcMenuItem>
-                            </template>
+                                <GeneralIcon icon="delete" class="group-hover:text-accent -ml-0.25 -mt-0.75 mr-0.5" />
+                                {{ $t('general.delete') }} {{ $t('objects.field').toLowerCase() }}
+                              </div>
+                            </NcMenuItem>
                           </NcMenu>
                         </template>
                       </NcDropdown>
@@ -1983,19 +2098,19 @@ watch(activeAiTab, (newValue) => {
           <Transition name="slide-fade">
             <div
               v-if="!changingField"
-              class="border-gray-200 border-l-1 nc-scrollbar-md h-full !overflow-y-auto"
+              ref="rightPanelRef"
+              class="flex-none border-gray-200 border-l-1 nc-scrollbar-md h-full !overflow-y-auto"
               @keydown.up.stop
               @keydown.down.stop
             >
               <SmartsheetColumnEditOrAddProvider
                 v-if="activeField"
-                class="p-4 w-[25rem]"
+                class="p-4 w-[25rem] flex-none"
                 :column="activeField"
                 :preload="fieldState(activeField)"
                 :table-explorer-columns="fields"
                 :is-column-valid="isColumnValid"
                 embed-mode
-                :readonly="isLocked"
                 from-table-explorer
                 :disable-title-focus="!!activeField?.id || !!activeField?.title"
                 @update="onFieldUpdate"

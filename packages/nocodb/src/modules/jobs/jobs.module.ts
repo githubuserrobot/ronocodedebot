@@ -1,6 +1,10 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
+import { RecoverDisconnectedTableNames } from './migration-jobs/nc_job_008_recover_disconnected_table_name';
+import { MigrateController } from '~/modules/jobs/jobs/export-import/migrate.controller';
+import { MigrateService } from '~/modules/jobs/jobs/export-import/migrate.service';
 import { NocoModule } from '~/modules/noco.module';
+import { getRedisURL, NC_REDIS_TYPE } from '~/helpers/redisHelpers';
 
 // Jobs
 import { ExportService } from '~/modules/jobs/jobs/export-import/export.service';
@@ -9,6 +13,7 @@ import { AtImportController } from '~/modules/jobs/jobs/at-import/at-import.cont
 import { AtImportProcessor } from '~/modules/jobs/jobs/at-import/at-import.processor';
 import { DuplicateController } from '~/modules/jobs/jobs/export-import/duplicate.controller';
 import { DuplicateProcessor } from '~/modules/jobs/jobs/export-import/duplicate.processor';
+import { DuplicateService } from '~/modules/jobs/jobs/export-import/duplicate.service';
 import { MetaSyncController } from '~/modules/jobs/jobs/meta-sync/meta-sync.controller';
 import { MetaSyncProcessor } from '~/modules/jobs/jobs/meta-sync/meta-sync.processor';
 import { SourceCreateController } from '~/modules/jobs/jobs/source-create/source-create.controller';
@@ -54,10 +59,10 @@ import { CACHE_PREFIX } from '~/utils/globals';
 export const JobsModuleMetadata = {
   imports: [
     forwardRef(() => NocoModule),
-    ...(process.env.NC_REDIS_JOB_URL
+    ...(getRedisURL(NC_REDIS_TYPE.JOB)
       ? [
           BullModule.forRoot({
-            url: process.env.NC_REDIS_JOB_URL,
+            url: getRedisURL(NC_REDIS_TYPE.JOB),
             prefix: CACHE_PREFIX === 'nc' ? undefined : `${CACHE_PREFIX}`,
           }),
           BullModule.registerQueue({
@@ -75,6 +80,7 @@ export const JobsModuleMetadata = {
     ...(process.env.NC_WORKER_CONTAINER !== 'true'
       ? [
           DuplicateController,
+          MigrateController,
           AtImportController,
           MetaSyncController,
           SourceCreateController,
@@ -86,10 +92,10 @@ export const JobsModuleMetadata = {
   providers: [
     JobsMap,
     JobsEventService,
-    ...(process.env.NC_REDIS_JOB_URL ? [] : [FallbackQueueService]),
+    ...(getRedisURL(NC_REDIS_TYPE.JOB) ? [] : [FallbackQueueService]),
     {
       provide: 'JobsService',
-      useClass: process.env.NC_REDIS_JOB_URL
+      useClass: getRedisURL(NC_REDIS_TYPE.JOB)
         ? JobsService
         : FallbackJobsService,
     },
@@ -98,6 +104,8 @@ export const JobsModuleMetadata = {
     ExportService,
     ImportService,
     DuplicateProcessor,
+    DuplicateService,
+    MigrateService,
     AtImportProcessor,
     MetaSyncProcessor,
     SourceCreateProcessor,
@@ -118,6 +126,7 @@ export const JobsModuleMetadata = {
     OrderColumnMigration,
     NoOpMigration,
     RecoverOrderColumnMigration,
+    RecoverDisconnectedTableNames,
   ],
   exports: ['JobsService'],
 };

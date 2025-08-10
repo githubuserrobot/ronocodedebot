@@ -3,12 +3,10 @@ import type { CarouselApi } from '../../nc/Carousel/interface'
 import { useAttachmentCell } from './utils'
 import { isOffice } from '~/utils/fileUtils'
 
-const { selectedFile, visibleItems, downloadAttachment, removeFile, renameFile, isPublic, isReadonly, isRenameModalOpen } =
+const { selectedFile, visibleItems, downloadAttachment, removeFile, renameFile, isPublic, isRenameModalOpen, isEditAllowed } =
   useAttachmentCell()!
 
 const isExpandedFormOpen = inject(IsExpandedFormOpenInj, ref(false))
-
-const { isSharedForm } = useSmartsheetStoreOrThrow()
 
 const { isUIAllowed } = useRoles()
 
@@ -17,25 +15,6 @@ const container = ref<HTMLElement | null>(null)
 const emblaMainApi: CarouselApi = ref()
 const emblaThumbnailApi: CarouselApi = ref()
 const selectedIndex = ref()
-
-const filetoDelete = reactive({
-  title: '',
-  i: 0,
-})
-const isModalOpen = ref(false)
-
-function onRemoveFileClick(title: any, i: number) {
-  isModalOpen.value = true
-  filetoDelete.title = title
-  filetoDelete.i = i
-}
-
-const handleFileDelete = (i: number) => {
-  removeFile(i)
-  isModalOpen.value = false
-  filetoDelete.i = 0
-  filetoDelete.title = ''
-}
 
 const { getPossibleAttachmentSrc } = useAttachment()
 
@@ -196,7 +175,7 @@ const initEmblaApi = (val: any) => {
             <NcCarouselItem v-for="(item, index) in visibleItems" :key="index">
               <div v-if="selectedIndex === index" :key="isUpdated" class="justify-center w-full h-full flex items-center">
                 <LazyCellAttachmentPreviewImage
-                  v-if="isImage(item.title, item.mimeType)"
+                  v-if="isImage(item.title, item.mimetype)"
                   class="nc-attachment-img-wrapper"
                   object-fit="contain"
                   controls
@@ -206,21 +185,31 @@ const initEmblaApi = (val: any) => {
                 />
 
                 <LazyCellAttachmentPreviewVideo
-                  v-else-if="isVideo(item.title, item.mimeType)"
+                  v-else-if="isVideo(item.title, item.mimetype)"
                   class="flex items-center w-full"
-                  :mime-type="item.mimeType"
+                  :mime-type="item.mimetype"
                   :title="item.title"
                   :src="getPossibleAttachmentSrc(item)"
                   @error="triggerReload"
                 />
+
+                <LazyCellAttachmentPreviewVideo
+                  v-else-if="isAudio(item.title, item.mimetype)"
+                  class="flex items-center w-full"
+                  :mime-type="item.mimetype"
+                  :title="item.title"
+                  :src="getPossibleAttachmentSrc(item)"
+                  @error="triggerReload"
+                />
+
                 <LazyCellAttachmentPreviewPdf
-                  v-else-if="isPdf(item.title, item.mimeType)"
+                  v-else-if="isPdf(item.title, item.mimetype)"
                   class="keep-open"
                   :src="getPossibleAttachmentSrc(item)"
                   @error="triggerReload"
                 />
                 <LazyCellAttachmentPreviewMiscOffice
-                  v-else-if="isOffice(item.title, item.mimeType)"
+                  v-else-if="isOffice(item.title, item.mimetype)"
                   class="keep-open"
                   :src="getPossibleAttachmentSrc(item)"
                   @error="triggerReload"
@@ -282,7 +271,7 @@ const initEmblaApi = (val: any) => {
               >
                 <div class="flex items-center justify-center">
                   <LazyCellAttachmentPreviewImage
-                    v-if="isImage(item.title, item.mimeType)"
+                    v-if="isImage(item.title, item.mimetype)"
                     class="nc-attachment-img-wrapper h-12"
                     object-fit="contain"
                     :alt="item.title"
@@ -290,14 +279,21 @@ const initEmblaApi = (val: any) => {
                     @error="triggerReload"
                   />
                   <div
-                    v-else-if="isVideo(item.title, item.mimeType)"
+                    v-else-if="isVideo(item.title, item.mimetype)"
                     class="h-full flex items-center h-6 justify-center rounded-md px-2 py-1 border-1 border-gray-200"
                   >
                     <GeneralIcon class="text-white" icon="play" />
                   </div>
 
                   <div
-                    v-else-if="isPdf(item.title, item.mimeType)"
+                    v-else-if="isAudio(item.title, item.mimetype)"
+                    class="h-full flex items-center h-6 justify-center rounded-md px-2 py-1 border-1 border-gray-200"
+                  >
+                    <GeneralIcon class="text-white" icon="ncVolume2" />
+                  </div>
+
+                  <div
+                    v-else-if="isPdf(item.title, item.mimetype)"
                     class="h-full flex items-center h-6 justify-center rounded-md px-2 py-1 border-1 border-gray-200"
                   >
                     <GeneralIcon class="text-white" icon="pdfFile" />
@@ -313,11 +309,7 @@ const initEmblaApi = (val: any) => {
         </div>
 
         <div class="absolute keep-open right-2 z-30 bottom-3 transition-all gap-3 transition-ease-in-out !h-6 flex items-center">
-          <NcTooltip
-            v-if="!isSharedForm || (!isReadonly && isUIAllowed('dataEdit') && !isPublic)"
-            color="light"
-            placement="bottom"
-          >
+          <NcTooltip v-if="isEditAllowed" color="light" placement="bottom">
             <template #title> {{ $t('title.renameFile') }} </template>
             <NcButton
               size="xsmall"
@@ -329,7 +321,7 @@ const initEmblaApi = (val: any) => {
             </NcButton>
           </NcTooltip>
 
-          <NcTooltip v-if="!isReadonly" color="light" placement="bottom">
+          <NcTooltip color="light" placement="bottom">
             <template #title> {{ $t('title.downloadFile') }} </template>
             <NcButton
               class="!hover:bg-transparent !text-white"
@@ -341,19 +333,10 @@ const initEmblaApi = (val: any) => {
             </NcButton>
           </NcTooltip>
 
-          <NcTooltip v-if="!isReadonly" color="light" placement="bottom">
+          <NcTooltip v-if="isEditAllowed" color="light" placement="bottomRight">
             <template #title> {{ $t('title.removeFile') }} </template>
-            <NcButton
-              class="!hover:bg-transparent !text-white"
-              size="xsmall"
-              type="text"
-              @click="onRemoveFileClick(selectedFile.title, selectedIndex)"
-            >
-              <component
-                :is="iconMap.delete"
-                v-if="isSharedForm || (isUIAllowed('dataEdit') && !isPublic)"
-                class="!hover:text-gray-400"
-              />
+            <NcButton class="!hover:bg-transparent !text-white" size="xsmall" type="text" @click="removeFile(selectedIndex)">
+              <component :is="iconMap.delete" class="!hover:text-gray-400" />
             </NcButton>
           </NcTooltip>
         </div>

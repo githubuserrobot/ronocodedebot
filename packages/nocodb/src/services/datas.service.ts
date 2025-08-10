@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { isLinksOrLTAR, isSystemColumn } from 'nocodb-sdk';
 import * as XLSX from 'xlsx';
 import papaparse from 'papaparse';
+import type { NcApiVersion } from 'nocodb-sdk';
 import type { BaseModelSqlv2 } from '~/db/BaseModelSqlv2';
 import type { PathParams } from '~/helpers/dataHelpers';
 import type { NcContext } from '~/interface/config';
@@ -31,6 +32,9 @@ export class DatasService {
       ignorePagination?: boolean;
       limitOverride?: number;
       throwErrorIfInvalidParams?: boolean;
+      getHiddenColumns?: boolean;
+      includeSortAndFilterColumns?: boolean;
+      apiVersion?: NcApiVersion;
     },
   ) {
     let { model, view } = param as { view?: View; model?: Model };
@@ -72,6 +76,9 @@ export class DatasService {
       throwErrorIfInvalidParams: true,
       ignorePagination: param.ignorePagination,
       limitOverride: param.limitOverride,
+      getHiddenColumns: param.getHiddenColumns,
+      apiVersion: param.apiVersion,
+      includeSortAndFilterColumns: param.includeSortAndFilterColumns,
     });
   }
 
@@ -117,6 +124,7 @@ export class DatasService {
       body: unknown;
       cookie: any;
       disableOptimization?: boolean;
+      query: any;
     },
   ) {
     const { model, view } = await getViewAndModelByAliasOrId(context, param);
@@ -130,7 +138,12 @@ export class DatasService {
       source,
     });
 
-    return await baseModel.nestedInsert(param.body, null, param.cookie);
+    return await baseModel.nestedInsert(
+      param.body,
+      param.cookie,
+      null,
+      param?.query,
+    );
   }
 
   async dataUpdate(
@@ -176,7 +189,6 @@ export class DatasService {
 
     // if xcdb base skip checking for LTAR
     if (!source.isMeta()) {
-      // todo: Should have error http status code
       const message = await baseModel.hasLTARData(param.rowId, model);
       if (message.length) {
         NcError.badRequest(message);
@@ -199,6 +211,9 @@ export class DatasService {
       limitOverride?: number;
       customConditions?: Filter[];
       ignoreCache?: boolean;
+      getHiddenColumns?: boolean;
+      apiVersion?: NcApiVersion;
+      includeSortAndFilterColumns?: boolean;
     },
   ) {
     const {
@@ -206,6 +221,8 @@ export class DatasService {
       view: view,
       query = {},
       ignoreViewFilterAndSort = false,
+      includeSortAndFilterColumns = false,
+      apiVersion,
     } = param;
 
     const source = await Source.get(context, model.source_id);
@@ -224,6 +241,9 @@ export class DatasService {
       query,
       view: view,
       throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+      getHiddenColumn: param.getHiddenColumns,
+      apiVersion,
+      includeSortAndFilterColumns: includeSortAndFilterColumns,
     });
 
     const listArgs: any = dependencyFields;
@@ -243,13 +263,16 @@ export class DatasService {
         try {
           data = await nocoExecute(
             ast,
-            await baseModel.list(listArgs, {
-              ignoreViewFilterAndSort,
-              throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-              ignorePagination: param.ignorePagination,
-              limitOverride: param.limitOverride,
-              ignoreCache: param.ignoreCache,
-            }),
+            await baseModel.list(
+              { ...listArgs, apiVersion: param.apiVersion },
+              {
+                ignoreViewFilterAndSort,
+                throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+                ignorePagination: param.ignorePagination,
+                limitOverride: param.limitOverride,
+                ignoreCache: param.ignoreCache,
+              },
+            ),
             {},
             listArgs,
           );
@@ -465,7 +488,7 @@ export class DatasService {
 
   async dataListByViewId(
     context: NcContext,
-    param: { viewId: string; query: any },
+    param: { viewId: string; query: any; apiVersion?: NcApiVersion },
   ) {
     const view = await View.get(context, param.viewId);
 
@@ -475,7 +498,12 @@ export class DatasService {
 
     if (!model) NcError.tableNotFound(view?.fk_model_id || param.viewId);
 
-    return await this.getDataList(context, { model, view, query: param.query });
+    return await this.getDataList(context, {
+      model,
+      view,
+      query: param.query,
+      apiVersion: param.apiVersion,
+    });
   }
 
   async mmList(
@@ -993,7 +1021,7 @@ export class DatasService {
   ) {
     const base = await Base.getWithInfoByTitleOrId(
       context,
-      req.params.baseName,
+      req.params.baseId ?? req.params.baseName,
     );
 
     const model = await Model.getByAliasOrId(context, {

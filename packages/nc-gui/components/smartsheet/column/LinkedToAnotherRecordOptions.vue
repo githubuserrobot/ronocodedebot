@@ -33,7 +33,8 @@ if (!isEdit.value) {
   })
 }
 
-const onUpdateDeleteOptions = sqlUi === MssqlUi ? ['NO ACTION'] : ['NO ACTION', 'CASCADE', 'RESTRICT', 'SET NULL', 'SET DEFAULT']
+const onUpdateDeleteOptions =
+  sqlUi instanceof MssqlUi ? ['NO ACTION'] : ['NO ACTION', 'CASCADE', 'RESTRICT', 'SET NULL', 'SET DEFAULT']
 
 if (!isEdit.value) {
   if (!vModel.value.parentId) vModel.value.parentId = meta.value?.id
@@ -45,7 +46,7 @@ if (!isEdit.value) {
   if (!vModel.value.type) vModel.value.type = 'mm'
   if (!vModel.value.onUpdate) vModel.value.onUpdate = onUpdateDeleteOptions[0]
   if (!vModel.value.onDelete) vModel.value.onDelete = onUpdateDeleteOptions[0]
-  if (!vModel.value.virtual) vModel.value.virtual = sqlUi === SqliteUi // appInfo.isCloud || sqlUi === SqliteUi
+  if (!vModel.value.virtual) vModel.value.virtual = sqlUi instanceof SqliteUi // appInfo.isCloud || sqlUi === SqliteUi
   if (!vModel.value.alias) vModel.value.alias = vModel.value.column_name
 } else {
   const colOptions = vModel.value?.colOptions as LinkToAnotherRecordType
@@ -250,8 +251,8 @@ const onFilterLabelClick = () => {
 <template>
   <div class="w-full flex flex-col gap-4">
     <div class="flex flex-col gap-4">
-      <a-form-item :label="$t('labels.relationType')" v-bind="validateInfos.type" class="nc-ltar-relation-type">
-        <a-radio-group v-model:value="linkType" name="type" v-bind="validateInfos.type" :disabled="isEdit">
+      <a-form-item :label="$t('labels.relationType')" class="nc-ltar-relation-type">
+        <a-radio-group v-model:value="linkType" name="type" :disabled="isEdit">
           <a-radio value="mm" data-testid="Many to Many">
             <span class="nc-ltar-icon nc-mm-icon">
               <GeneralIcon icon="mm_solid" />
@@ -330,7 +331,7 @@ const onFilterLabelClick = () => {
           class="text-s"
           data-testid="nc-limit-record-view"
           @click="onViewLabelClick"
-          >Limit record selection to a view</span
+          >{{ $t('labels.limitRecordSelectionToView') }}</span
         >
       </div>
       <a-form-item v-if="limitRecToView" class="!pl-8 flex w-full pb-2 mt-4 space-y-2 nc-ltar-child-view">
@@ -371,7 +372,7 @@ const onFilterLabelClick = () => {
             data-testid="nc-limit-record-filters"
             @click="onFilterLabelClick"
           >
-            Limit record selection to filters
+            {{ $t('labels.limitRecordSelectionToFilters') }}
           </span>
         </div>
         <div v-if="limitRecToCond" class="overflow-auto">

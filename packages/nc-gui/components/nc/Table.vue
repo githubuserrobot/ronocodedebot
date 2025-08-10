@@ -78,25 +78,33 @@ const updateOrderBy = (field: string) => {
  * We are using 2 different table tag to make header sticky,
  * so it's imp to keep header cell and body cell width same
  */
+const handleUpdateCellWidth = () => {
+  if (!tableHeader.value || !tableHeadWidth.value) return
+
+  nextTick(() => {
+    const headerCells = tableHeader.value?.querySelectorAll('th > div')
+
+    if (headerCells && headerCells.length) {
+      headerCells.forEach((el, i) => {
+        headerCellWidth.value[i] = el.getBoundingClientRect().width || undefined
+      })
+    }
+  })
+}
+
 watch(
-  tableHeadWidth,
+  [tableHeader, tableHeadWidth],
   () => {
-    if (!tableHeader.value || !tableHeadWidth.value) return
-
-    nextTick(() => {
-      const headerCells = tableHeader.value?.querySelectorAll('th > div')
-
-      if (headerCells && headerCells.length) {
-        headerCells.forEach((el, i) => {
-          headerCellWidth.value[i] = el.getBoundingClientRect().width || undefined
-        })
-      }
-    })
+    handleUpdateCellWidth()
   },
   {
     immediate: true,
   },
 )
+
+onMounted(() => {
+  handleUpdateCellWidth()
+})
 
 useEventListener(tableWrapper, 'scroll', () => {
   const stickyHeaderCell = tableWrapper.value?.querySelector('th:nth-of-type(1)')
@@ -168,9 +176,9 @@ useEventListener(tableWrapper, 'scroll', () => {
                 },
               ]"
               :style="{
-                width: col.width,
+                width: col.width ? `${col.width}px` : undefined,
                 flexBasis: !col.width ? col.basis : undefined,
-                maxWidth: col.width ? col.width : undefined,
+                maxWidth: col.width ? `${col.width}px` : undefined,
               }"
               :data-test-id="`nc-table-header-cell-${col.name || col.key}`"
               @click="col.showOrderBy && col?.dataIndex ? updateOrderBy(col.dataIndex) : undefined"
@@ -212,6 +220,7 @@ useEventListener(tableWrapper, 'scroll', () => {
           }"
         >
           <tbody>
+            <slot name="body-prepend" />
             <tr
               v-for="(record, recordIndex) of data"
               :key="recordIndex"
@@ -233,9 +242,9 @@ useEventListener(tableWrapper, 'scroll', () => {
                   },
                 ]"
                 :style="{
-                  width: col.width,
+                  width: col.width ? `${col.width}px` : undefined,
                   flexBasis: !col.width ? col.basis : undefined,
-                  maxWidth: col.width ? col.width : undefined,
+                  maxWidth: col.width ? `${col.width}px` : undefined,
                 }"
                 :data-test-id="`nc-table-cell-${col.name || col.key}`"
               >

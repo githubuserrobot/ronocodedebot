@@ -3,6 +3,8 @@ import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import type { ColumnType, LinkToAnotherRecordType, TableType } from 'nocodb-sdk'
 import { UITypes, isLinksOrLTAR } from 'nocodb-sdk'
+import { UseDetachedLongTextProvider } from '../smartsheet/grid/canvas/composables/useDetachedLongText'
+import DetachedExpandedText from '../smartsheet/grid/canvas/components/DetachedExpandedText.vue'
 
 const props = defineProps<{
   activeTab: TabItem
@@ -29,7 +31,8 @@ const { handleSidebarOpenOnMobileForNonViews } = useConfigStore()
 const { activeTableId } = storeToRefs(useTablesStore())
 
 const { activeView, openedViewsTab, activeViewTitleOrId } = storeToRefs(useViewsStore())
-const { isGallery, isGrid, isForm, isKanban, isLocked, isMap, isCalendar, xWhere } = useProvideSmartsheetStore(activeView, meta)
+const { isGallery, isGrid, isForm, isKanban, isLocked, isMap, isCalendar, xWhere, isActionPaneActive, actionPaneSize } =
+  useProvideSmartsheetStore(activeView, meta)
 
 useSqlEditor()
 
@@ -44,6 +47,9 @@ const { base } = storeToRefs(useBase())
 const activeSource = computed(() => {
   return meta.value?.source_id && base.value && base.value.sources?.find((source) => source.id === meta.value?.source_id)
 })
+const { isFeatureEnabled } = useBetaFeatureToggle()
+
+const isAutomationEnabled = computed(() => isFeatureEnabled(FEATURE_FLAG.NOCODB_SCRIPTS))
 
 useProvideKanbanViewStore(meta, activeView)
 useProvideMapViewStore(meta, activeView)
@@ -71,6 +77,7 @@ provide(
   ),
 )
 useExpandedFormDetachedProvider()
+UseDetachedLongTextProvider()
 
 useProvideViewColumns(activeView, meta, () => reloadViewDataEventHook?.trigger())
 
@@ -81,6 +88,8 @@ useProvideSmartsheetLtarHelpers(meta)
 const grid = ref()
 
 const extensionPaneRef = ref()
+
+const actionPaneRef = ref()
 
 const onDrop = async (event: DragEvent) => {
   event.preventDefault()
@@ -168,23 +177,36 @@ const { isPanelExpanded, extensionPanelSize } = useExtensions()
 const contentSize = computed(() => {
   if (isPanelExpanded.value && extensionPanelSize.value) {
     return 100 - extensionPanelSize.value
+  } else if (isActionPaneActive.value && actionPaneSize.value) {
+    return 100 - actionPaneSize.value
   } else {
     return 100
   }
 })
 
 const contentMaxSize = computed(() => {
-  if (!isPanelExpanded.value) {
+  if (!isPanelExpanded.value && !isActionPaneActive.value) {
     return 100
   } else {
     return ((windowSize.value - leftSidebarWidth.value - 300) / (windowSize.value - leftSidebarWidth.value)) * 100
   }
 })
 
-const onResize = (sizes: { min: number; max: number; size: number }[]) => {
+const onResize = () => {
+  if (isPanelExpanded.value && !extensionPaneRef.value?.isReady) {
+    extensionPaneRef.value?.onReady()
+  }
+
+  if (isActionPaneActive.value && !actionPaneRef.value?.isReady) {
+    actionPaneRef.value?.onReady()
+  }
+}
+
+const onResized = (sizes: { min: number; max: number; size: number }[]) => {
   if (sizes.length === 2) {
     if (!sizes[1].size) return
-    extensionPanelSize.value = sizes[1].size
+    if (isPanelExpanded.value) extensionPanelSize.value = sizes[1].size
+    else if (isActionPaneActive.value) actionPaneSize.value = sizes[1].size
   }
 }
 
@@ -193,6 +215,13 @@ const onReady = () => {
     // wait until extension pane animation complete
     setTimeout(() => {
       extensionPaneRef.value?.onReady()
+    }, 300)
+  }
+
+  if (isActionPaneActive.value && actionPaneRef.value) {
+    // wait until action pane animation complete
+    setTimeout(() => {
+      actionPaneRef.value?.onReady()
     }, 300)
   }
 }
@@ -209,7 +238,8 @@ const onReady = () => {
           'nc-is-open-extensions': isPanelExpanded,
         }"
         @ready="() => onReady()"
-        @resized="onResize"
+        @resize="onResize"
+        @resized="onResized"
       >
         <Pane class="flex flex-col h-full min-w-0" :max-size="contentMaxSize" :size="contentSize">
           <LazySmartsheetToolbar v-if="!isForm" />
@@ -238,11 +268,13 @@ const onReady = () => {
             </Transition>
           </div>
         </Pane>
-        <ExtensionsPane ref="extensionPaneRef" />
+        <ExtensionsPane v-if="isPanelExpanded" ref="extensionPaneRef" />
+        <SmartsheetAutomationActionPane v-else-if="isActionPaneActive && isEeUI && isAutomationEnabled" ref="actionPaneRef" />
       </Splitpanes>
       <SmartsheetDetails v-else />
     </div>
     <LazySmartsheetExpandedFormDetached />
+    <DetachedExpandedText />
   </div>
 </template>
 

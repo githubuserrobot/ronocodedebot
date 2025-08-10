@@ -3,7 +3,7 @@ const props = withDefaults(
   defineProps<{
     checked: boolean
     disabled?: boolean
-    size?: 'default' | 'small' | 'xsmall'
+    size?: 'default' | 'small' | 'xsmall' | 'xxsmall'
     placement?: 'left' | 'right'
     loading?: boolean
     contentWrapperClass?: string
@@ -51,11 +51,13 @@ const onChange = (e: boolean, updateValue = false) => {
     <slot />
   </span>
   <a-switch
-    v-model:checked="checked"
+    :checked="checked"
     :disabled="disabled"
     class="nc-switch"
     :class="{
       'size-xsmall': size === 'xsmall',
+      'size-xxsmall': size === 'xxsmall',
+      'size-small': size === 'small',
     }"
     :loading="loading"
     v-bind="$attrs"
@@ -80,6 +82,28 @@ const onChange = (e: boolean, updateValue = false) => {
 </template>
 
 <style lang="scss" scoped>
+.size-small {
+  @apply h-4 min-w-[28px] leading-[14px];
+
+  :deep(.ant-switch-handle) {
+    @apply h-[12px] w-[12px] top-[2px] left-[calc(100%_-_26px)];
+  }
+
+  :deep(.ant-switch-inner) {
+    @apply !mr-[5px] !ml-[18px] !my-0;
+  }
+
+  &.ant-switch-checked {
+    :deep(.ant-switch-handle) {
+      @apply left-[calc(100%_-_14px)];
+    }
+
+    :deep(.ant-switch-inner) {
+      @apply !mr-[18px] !ml-[5px];
+    }
+  }
+}
+
 .size-xsmall {
   @apply h-3.5 min-w-[26px] leading-[14px];
 
@@ -98,6 +122,27 @@ const onChange = (e: boolean, updateValue = false) => {
 
     :deep(.ant-switch-inner) {
       @apply !mr-[18px] !ml-[5px];
+    }
+  }
+}
+.size-xxsmall {
+  @apply h-2.5 min-w-[18px] leading-[12px];
+
+  :deep(.ant-switch-handle) {
+    @apply h-[6px] w-[6px] top-[2px] left-[calc(100%_-_16px)];
+  }
+
+  :deep(.ant-switch-inner) {
+    @apply !mr-[4px] !ml-[8px] !my-0;
+  }
+
+  &.ant-switch-checked {
+    :deep(.ant-switch-handle) {
+      @apply left-[calc(100%_-_8px)];
+    }
+
+    :deep(.ant-switch-inner) {
+      @apply !mr-[12px] !ml-[4px];
     }
   }
 }

@@ -28,6 +28,8 @@ const vModel = useVModel(props, 'value', emit)
 
 const { isKanbanStack, optionId, isNewStack } = toRefs(props)
 
+const { $e } = useNuxtApp()
+
 const { setAdditionalValidations, validateInfos, column } = useColumnCreateStoreOrThrow()
 
 // const { base } = storeToRefs(useBase())
@@ -83,7 +85,10 @@ const validators = {
                 if (vModel.value.uidt === UITypes.MultiSelect && opt.title.includes(',')) {
                   return reject(new Error(t('msg.selectOption.multiSelectCantHaveCommas')))
                 }
-                if (options.value.filter((el) => el.title === opt.title && (el as any).status !== 'remove').length > 1) {
+                if (
+                  options.value.filter((el) => el.title?.trim() === opt.title?.trim() && (el as any).status !== 'remove').length >
+                  1
+                ) {
                   return reject(new Error(t('msg.selectOption.cantHaveDuplicates')))
                 }
               }
@@ -159,7 +164,7 @@ const addNewOption = () => {
   })
 }
 
-const syncOptions = (saveChanges: boolean = false, submit: boolean = false, payload?: Option) => {
+const syncOptions = (saveChanges = false, submit = false, payload?: Option) => {
   // set initial colOptions if not set
   vModel.value.colOptions = vModel.value.colOptions || {}
   vModel.value.colOptions.options = options.value
@@ -209,7 +214,7 @@ const removeRenderedOption = (index: number) => {
   }
 }
 
-const optionChanged = (changedElement: Option, saveChanges: boolean = false) => {
+const optionChanged = (changedElement: Option, saveChanges = false) => {
   const changedDefaultOptionIndex = defaultOption.value.findIndex((o) => {
     if (o.id !== undefined && changedElement.id !== undefined) {
       return o.id === changedElement.id
@@ -336,6 +341,8 @@ const loadListData = async ($state: any) => {
 
 const predictOptions = async () => {
   if (!vModel.value?.title || !meta.value?.id) return
+
+  $e('a:column:ai:select:predict-options')
 
   isLoadingPredictOptions.value = true
 
@@ -714,7 +721,7 @@ if (!isKanbanStack.value) {
           <component :is="iconMap.plus" />
         </template>
 
-        Add option
+        {{ $t('labels.addOption') }}
       </NcButton>
       <NcTooltip v-if="isFeatureEnabled(FEATURE_FLAG.AI_FEATURES)" class="w-1/2">
         <template #title>

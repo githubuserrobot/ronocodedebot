@@ -6,5 +6,8 @@ export * from './nocoExecute';
 export { Tele as T } from './tele';
 export * from './packageVersion';
 export * from './encryptDecrypt';
+export * from './audit';
+export * from './processUtils';
 
 export const isEE = false;
+export const isOnPrem = false;

@@ -1,11 +1,20 @@
 import type { ColumnType, CommentType, MetaType, TableType } from 'nocodb-sdk'
+import { NcMarkdownParser } from '~/helpers/tiptap'
 
 const [useProvideRowComments, useRowComments] = useInjectionState((meta: Ref<TableType>, row: Ref<Row>) => {
   const isCommentsLoading = ref(false)
 
+  const { user } = useGlobal()
+
   const { isUIAllowed } = useRoles()
 
   const { $e, $state, $api } = useNuxtApp()
+
+  const basesStore = useBases()
+
+  const { basesUser } = storeToRefs(basesStore)
+
+  const baseUsers = computed(() => (meta.value.base_id ? basesUser.value.get(meta.value.base_id) || [] : []))
 
   const comments = ref<
     Array<
@@ -18,11 +27,28 @@ const [useProvideRowComments, useRowComments] = useInjectionState((meta: Ref<Tab
     >
   >([])
 
-  const basesStore = useBases()
-
-  const { basesUser } = storeToRefs(basesStore)
-
-  const baseUsers = computed(() => (meta.value.base_id ? basesUser.value.get(meta.value.base_id) || [] : []))
+  const parsedHtmlComments = computed(() => {
+    return comments.value.reduce((acc, comment) => {
+      if (comment.id) {
+        let commentValue = unref(comment.comment)
+        if (comment.updated_at !== comment.created_at && comment.updated_at) {
+          const str = timeAgo(comment.updated_at).replace(' ', '_')
+          commentValue += ` [(edited)](a~~~###~~~Edited_${str}) `
+        }
+        acc[comment.id] =
+          NcMarkdownParser.parse(
+            commentValue,
+            {
+              enableMention: !!isEeUI,
+              users: unref(baseUsers.value),
+              currentUser: unref(user.value),
+            },
+            true,
+          ) ?? ''
+      }
+      return acc
+    }, {} as Record<string, any>)
+  })
 
   const loadComments = async (_rowId?: string, ignoreLoadingIndicator = true) => {
     if (!isUIAllowed('commentList') || (!row.value && !_rowId)) return
@@ -226,6 +252,7 @@ const [useProvideRowComments, useRowComments] = useInjectionState((meta: Ref<Tab
     deleteComment,
     isCommentsLoading,
     primaryKey,
+    parsedHtmlComments,
   }
 })
 

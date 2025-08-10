@@ -1,7 +1,9 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
-import { UITypes, ViewTypes } from 'nocodb-sdk';
+import { ncIsArray, UITypes, ViewTypes } from 'nocodb-sdk';
+import type { NcRequest } from 'nocodb-sdk';
 import type { LinkToAnotherRecordColumn } from '~/models';
 import type { NcContext } from '~/interface/config';
+import type { DependantFields } from '~/helpers/getAst';
 import { nocoExecute } from '~/utils';
 import { Column, Model, Source, View } from '~/models';
 import { NcError } from '~/helpers/catchError';
@@ -9,7 +11,7 @@ import getAst from '~/helpers/getAst';
 import { PagedResponseImpl } from '~/helpers/PagedResponse';
 import { getColumnByIdOrName } from '~/helpers/dataHelpers';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
-import { replaceDynamicFieldWithValue } from '~/db/BaseModelSqlv2';
+import { replaceDynamicFieldWithValue } from '~/helpers/dbHelpers';
 import { Filter } from '~/models';
 import { IJobsService } from '~/modules/jobs/jobs-service.interface';
 import { DatasService } from '~/services/datas.service';
@@ -378,6 +380,7 @@ export class PublicDatasService {
       body: any;
       files: any[];
       siteUrl: string;
+      req: NcRequest;
     },
   ) {
     const view = await View.getByUUID(context, param.sharedViewUuid);
@@ -449,6 +452,7 @@ export class PublicDatasService {
         attachments[fieldName].push(
           ...(await this.attachmentsService.upload({
             files: [file],
+            req: param.req,
           })),
         );
       }
@@ -476,6 +480,7 @@ export class PublicDatasService {
       attachments[file.fieldName].unshift(
         ...(await this.attachmentsService.uploadViaURL({
           urls: [file.url],
+          req: param.req,
         })),
       );
     }
@@ -484,7 +489,7 @@ export class PublicDatasService {
       insertObject[column] = JSON.stringify(data);
     }
 
-    return await baseModel.nestedInsert(insertObject, null);
+    return await baseModel.nestedInsert(insertObject, param.req, null);
   }
 
   async relDataList(
@@ -533,6 +538,26 @@ export class PublicDatasService {
       extractOnlyPrimaries: true,
     });
 
+    const listArgs: DependantFields & {
+      filterArr?: Filter[];
+      filterArrJson?: string;
+    } = dependencyFields;
+
+    try {
+      if (listArgs.filterArrJson)
+        listArgs.filterArr = JSON.parse(listArgs.filterArrJson) as Filter[];
+    } catch (e) {}
+
+    if (view.type === ViewTypes.FORM && ncIsArray(param.query?.fields)) {
+      param.query.fields.forEach(listArgs.fieldsSet.add, listArgs.fieldsSet);
+
+      param.query.fields.forEach((f) => {
+        if (ast[f] === undefined) {
+          ast[f] = 1;
+        }
+      });
+    }
+
     let data = [];
 
     let count = 0;
@@ -554,14 +579,14 @@ export class PublicDatasService {
       data = data = await nocoExecute(
         ast,
         await baseModel.list({
-          ...dependencyFields,
+          ...listArgs,
           customConditions,
         }),
         {},
-        dependencyFields,
+        listArgs,
       );
       count = await baseModel.count({
-        ...dependencyFields,
+        ...listArgs,
         customConditions,
       } as any);
     } catch (e) {

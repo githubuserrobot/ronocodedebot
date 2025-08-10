@@ -1,5 +1,5 @@
-import { ViewLockType, ViewTypes } from 'nocodb-sdk'
 import type { FilterType, KanbanType, SortType, TableType, ViewType } from 'nocodb-sdk'
+import { NcApiVersion, ViewLockType, ViewTypes, extractFilterFromXwhere } from 'nocodb-sdk'
 import type { Ref } from 'vue'
 import type { SmartsheetStoreEvents } from '#imports'
 
@@ -12,7 +12,12 @@ const [useProvideSmartsheetStore, useSmartsheetStore] = useInjectionState(
     initialSorts?: Ref<SortType[]>,
     initialFilters?: Ref<FilterType[]>,
   ) => {
+    const isPublic = inject(IsPublicInj, ref(false))
+
     const { $api } = useNuxtApp()
+
+    const router = useRouter()
+    const route = router.currentRoute
 
     const { user } = useGlobal()
 
@@ -44,21 +49,57 @@ const [useProvideSmartsheetStore, useSmartsheetStore] = useInjectionState(
     const isMap = computed(() => view.value?.type === ViewTypes.MAP)
     const isSharedForm = computed(() => isForm.value && shared)
     const isDefaultView = computed(() => view.value?.is_default)
+
+    const aliasColObjMap = computed(() => {
+      const colObj = (meta.value as TableType)?.columns?.reduce((acc, col) => {
+        acc[col.title] = col
+        return acc
+      }, {})
+      return colObj
+    })
+
+    const whereQueryFromUrlError = computed(() => {
+      if (route.value.query.where) {
+        return extractFilterFromXwhere({ api_version: NcApiVersion.V1 }, route.value.query.where, aliasColObjMap.value, false)
+          ?.errors
+      }
+    })
+    const whereQueryFromUrl = computed(() => {
+      if (whereQueryFromUrlError.value?.length) {
+        return
+      }
+
+      return route.value.query.where
+    })
+
     const xWhere = computed(() => {
       let where
+
+      // if where is already present in the query, use that
+      if (whereQueryFromUrl.value) {
+        where = whereQueryFromUrl.value
+      }
+
       const col =
         (meta.value as TableType)?.columns?.find(({ id }) => id === search.value.field) ||
         (meta.value as TableType)?.columns?.find((v) => v.pv)
-      if (!col) return
+      if (!col) return where
 
-      if (!search.value.query.trim()) return
+      if (!search.value.query.trim()) return where
+
+      // concat the where clause if query is present
       if (sqlUi.value && ['text', 'string'].includes(sqlUi.value.getAbstractType(col)) && col.dt !== 'bigint') {
-        where = `(${col.title},like,%${search.value.query.trim()}%)`
+        where = `${where ? `${where}~and` : ''}(${col.title},like,%${search.value.query.trim()}%)`
       } else {
-        where = `(${col.title},eq,${search.value.query.trim()})`
+        where = `${where ? `${where}~and` : ''}(${col.title},eq,${search.value.query.trim()})`
       }
+
       return where
     })
+
+    const isActionPaneActive = ref(false)
+
+    const actionPaneSize = ref(40)
 
     const isSqlView = computed(() => (meta.value as TableType)?.type === 'view')
     const sorts = ref<SortType[]>(unref(initialSorts) ?? [])
@@ -86,6 +127,35 @@ const [useProvideSmartsheetStore, useSmartsheetStore] = useInjectionState(
       },
     )
 
+    const viewColumnsMap = reactive<Record<string, Record<string, any>[]>>({})
+    const pendingRequests = new Map()
+
+    const getViewColumns = async (viewId: string) => {
+      if (isPublic.value) return []
+
+      if (viewColumnsMap[viewId]) return viewColumnsMap[viewId]
+
+      if (pendingRequests.has(viewId)) {
+        return pendingRequests.get(viewId)
+      }
+
+      const promise = $api.dbViewColumn
+        .list(viewId)
+        .then((result) => {
+          viewColumnsMap[viewId] = result.list
+          pendingRequests.delete(viewId)
+          return result.list
+        })
+        .catch((error) => {
+          pendingRequests.delete(viewId)
+          throw error
+        })
+
+      pendingRequests.set(viewId, promise)
+
+      return promise
+    }
+
     return {
       view,
       meta,
@@ -107,6 +177,10 @@ const [useProvideSmartsheetStore, useSmartsheetStore] = useInjectionState(
       sqlUi,
       allFilters,
       isDefaultView,
+      actionPaneSize,
+      isActionPaneActive,
+      viewColumnsMap,
+      getViewColumns,
     }
   },
   'smartsheet-store',

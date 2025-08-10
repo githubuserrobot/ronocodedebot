@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { type ViewType, ViewTypes } from 'nocodb-sdk'
+import { type TableType, type ViewType, ViewTypes, viewTypeAlias } from 'nocodb-sdk'
 
 const { isMobileMode } = useGlobal()
 
@@ -24,6 +24,8 @@ const { refreshCommandPalette } = useCommandPalette()
 const { isFeatureEnabled } = useBetaFeatureToggle()
 
 const isOpen = ref<boolean>(false)
+
+const isSqlView = computed(() => (activeTable.value as TableType)?.type === 'view')
 
 const activeSource = computed(() => {
   return base.value.sources?.find((s) => s.id === activeView.value?.source_id)
@@ -64,7 +66,7 @@ const handleNavigateToView = async (view: ViewType) => {
  * It checks if the input string matches either the default view title (translated) or the view's title.
  * The matching is case-insensitive.
  */
-const filterOption = (input: string = '', view: ViewType) => {
+const filterOption = (input = '', view: ViewType) => {
   if (view.is_default && t('title.defaultView').toLowerCase().includes(input)) {
     return true
   }
@@ -112,6 +114,8 @@ async function onOpenModal({
   coverImageColumnId?: string
 }) {
   isOpen.value = false
+
+  $e('c:view:create:topbar', { view: type === 'AI' ? type : viewTypeAlias[type] })
 
   const isDlgOpen = ref(true)
 
@@ -225,38 +229,41 @@ async function onOpenModal({
                 <a-menu-item @click.stop="onOpenModal({ type: ViewTypes.GRID })">
                   <div class="nc-viewlist-submenu-popup-item" data-testid="topbar-view-create-grid">
                     <GeneralViewIcon :meta="{ type: ViewTypes.GRID }" />
-                    Grid
+                    {{ $t('objects.viewType.grid') }}
                   </div>
                 </a-menu-item>
 
                 <NcTooltip
                   :title="$t('tooltip.sourceDataIsReadonly')"
-                  :disabled="!activeSource?.is_data_readonly"
+                  :disabled="!activeSource?.is_data_readonly && !isSqlView"
                   placement="right"
                 >
-                  <a-menu-item :disabled="!!activeSource?.is_data_readonly" @click="onOpenModal({ type: ViewTypes.FORM })">
+                  <a-menu-item
+                    :disabled="!!activeSource?.is_data_readonly || isSqlView"
+                    @click="onOpenModal({ type: ViewTypes.FORM })"
+                  >
                     <div
                       class="nc-viewlist-submenu-popup-item"
                       data-testid="topbar-view-create-form"
                       :class="{
-                        'opacity-50': !!activeSource?.is_data_readonly,
+                        'opacity-50': !!activeSource?.is_data_readonly || isSqlView,
                       }"
                     >
                       <GeneralViewIcon :meta="{ type: ViewTypes.FORM }" />
-                      Form
+                      {{ $t('objects.viewType.form') }}
                     </div>
                   </a-menu-item>
                 </NcTooltip>
                 <a-menu-item @click="onOpenModal({ type: ViewTypes.GALLERY })">
                   <div class="nc-viewlist-submenu-popup-item" data-testid="topbar-view-create-gallery">
                     <GeneralViewIcon :meta="{ type: ViewTypes.GALLERY }" />
-                    Gallery
+                    {{ $t('objects.viewType.gallery') }}
                   </div>
                 </a-menu-item>
                 <a-menu-item data-testid="topbar-view-create-kanban" @click="onOpenModal({ type: ViewTypes.KANBAN })">
                   <div class="nc-viewlist-submenu-popup-item">
                     <GeneralViewIcon :meta="{ type: ViewTypes.KANBAN }" />
-                    Kanban
+                    {{ $t('objects.viewType.kanban') }}
                   </div>
                 </a-menu-item>
                 <a-menu-item data-testid="topbar-view-create-calendar" @click="onOpenModal({ type: ViewTypes.CALENDAR })">

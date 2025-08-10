@@ -3,7 +3,7 @@ const props = defineProps<{
   value: any
   isVisibleDefaultValueInput: boolean
 }>()
-const emits = defineEmits(['update:value'])
+const emits = defineEmits(['update:value', 'update:isVisibleDefaultValueInput'])
 
 provide(EditColumnInj, ref(true))
 
@@ -13,16 +13,34 @@ const isVisibleDefaultValueInput = useVModel(props, 'isVisibleDefaultValueInput'
 
 const { isAiModeFieldModal } = usePredictFields()
 
+const defaultValueWrapperRef = ref<HTMLDivElement>()
+
 const cdfValue = computed({
   get: () => vModel.value.cdf,
   set: (value) => {
-    if (value === '<br />') {
+    if (value === '<br />' || value === '<br>') {
       vModel.value.cdf = null
     } else {
       vModel.value.cdf = value
     }
   },
 })
+
+const handleShowInput = () => {
+  isVisibleDefaultValueInput.value = true
+
+  // In playwright testing we first enable this default input and then start filling all fields
+  // So it's imp to not to focus input
+  if (ncIsPlaywright()) return
+
+  nextTick(() => {
+    ncDelay(300).then(() => {
+      if (defaultValueWrapperRef.value) {
+        focusInputEl('.nc-cell', defaultValueWrapperRef.value)
+      }
+    })
+  })
+}
 </script>
 
 <template>
@@ -32,7 +50,7 @@ const cdfValue = computed({
       type="text"
       class="text-gray-700"
       data-testid="nc-show-default-value-btn"
-      @click.stop="isVisibleDefaultValueInput = true"
+      @click.stop="handleShowInput"
     >
       <div class="flex items-center gap-2">
         <GeneralIcon icon="plus" class="flex-none h-4 w-4" />
@@ -47,6 +65,7 @@ const cdfValue = computed({
     </div>
     <div class="flex flex-row gap-2">
       <div
+        ref="defaultValueWrapperRef"
         class="nc-default-value-wrapper nc-rich-long-text-default-value border-1 relative pt-7 flex items-center w-full px-0 border-gray-300 rounded-md max-h-70 pb-1 focus-within:(border-brand-500 shadow-selected) transition-all duration-0.3s"
         :class="{
           'bg-white': isAiModeFieldModal,

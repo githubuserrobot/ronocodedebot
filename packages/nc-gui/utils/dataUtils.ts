@@ -1,7 +1,31 @@
-import { RelationTypes, UITypes, buildFilterTree, isDateMonthFormat, isSystemColumn, isVirtualCol } from 'nocodb-sdk'
-import type { ColumnType, FilterType, LinkToAnotherRecordType, TableType } from 'nocodb-sdk'
+import {
+  RelationTypes,
+  UITypes,
+  buildFilterTree,
+  dateFormats,
+  getRenderAsTextFunForUiType,
+  isAIPromptCol,
+  isCreatedOrLastModifiedByCol,
+  isCreatedOrLastModifiedTimeCol,
+  isDateMonthFormat,
+  isSystemColumn,
+  isVirtualCol,
+  timeFormats,
+} from 'nocodb-sdk'
+import type {
+  AIRecordType,
+  ButtonType,
+  ColumnType,
+  FilterType,
+  LinkToAnotherRecordType,
+  LookupType,
+  RollupType,
+  TableType,
+} from 'nocodb-sdk'
 import dayjs from 'dayjs'
+import { timeFormatsObj } from '../components/smartsheet/grid/canvas/utils/cell'
 import { isColumnRequiredAndNull } from './columnUtils'
+import { parseFlexibleDate } from '~/utils/datetimeUtils'
 
 export const isValidValue = (val: unknown) => {
   if (ncIsNull(val) || ncIsUndefined(val)) {
@@ -132,7 +156,7 @@ export const rowDefaultData = (columns: ColumnType[] = []) => {
       !/^\w+\(\)|CURRENT_TIMESTAMP$/.test(col.cdf)
     ) {
       const defaultValue = col.cdf
-      acc[col.title!] = typeof defaultValue === 'string' ? defaultValue.replace(/^'|'$/g, '') : defaultValue
+      acc[col.title!] = typeof defaultValue === 'string' ? defaultValue.replace(/^['"]|['"]$/g, '') : defaultValue
     }
     return acc
   }, {} as Record<string, any>)
@@ -146,7 +170,13 @@ export const isRowEmpty = (record: Pick<Row, 'row'>, col: ColumnType): boolean =
   return !isValidValue(record.row[col.title])
 }
 
-export function validateRowFilters(_filters: FilterType[], data: any, columns: ColumnType[], client: any) {
+export function validateRowFilters(
+  _filters: FilterType[],
+  data: any,
+  columns: ColumnType[],
+  client: any,
+  metas: Record<string, any>,
+) {
   if (!_filters.length) {
     return true
   }
@@ -157,7 +187,7 @@ export function validateRowFilters(_filters: FilterType[], data: any, columns: C
   for (const filter of filters) {
     let res
     if (filter.is_group && filter.children?.length) {
-      res = validateRowFilters(filter.children, data, columns, client)
+      res = validateRowFilters(filter.children, data, columns, client, metas)
     } else {
       const column = columns.find((c) => c.id === filter.fk_column_id)
       if (!column) {
@@ -305,7 +335,13 @@ export function validateRowFilters(_filters: FilterType[], data: any, columns: C
             break
         }
 
-        if ([UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(column.uidt!)) {
+        if (
+          [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(column.uidt!) ||
+          (column.uidt === UITypes.Lookup &&
+            [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(
+              getLookupColumnType(column, { columns }, metas) as UITypes,
+            ))
+        ) {
           const userIds: string[] = Array.isArray(data[field])
             ? data[field].map((user) => user.id)
             : data[field]?.id
@@ -441,4 +477,393 @@ export const isAllowToRenderRowEmptyField = (col: ColumnType) => {
   }
 
   return false
+}
+
+// Plain cell value
+export const getCheckBoxValue = (modelValue: boolean | string | number | '0' | '1') => {
+  return !!modelValue && modelValue !== '0' && modelValue !== 0 && modelValue !== 'false'
+}
+
+export const getMultiSelectValue = (modelValue: any, params: ParsePlainCellValueProps['params']): string => {
+  const { col, isMysql } = params
+
+  if (!modelValue) {
+    return ''
+  }
+
+  return modelValue
+    ? Array.isArray(modelValue)
+      ? modelValue.join(', ')
+      : modelValue.toString()
+    : isMysql(col.source_id)
+    ? modelValue.toString().split(',').join(', ')
+    : modelValue.split(', ')
+}
+
+export const getDateValue = (modelValue: string | null | number, col: ColumnType) => {
+  const dateFormat = parseProp(col.meta)?.date_format ?? 'YYYY-MM-DD'
+
+  if (!modelValue) {
+    return ''
+  } else if (!dayjs(modelValue).isValid()) {
+    const parsedDate = parseFlexibleDate(modelValue)
+    if (parsedDate) {
+      return parsedDate.format(dateFormat) as string
+    }
+  } else {
+    return dayjs(/^\d+$/.test(String(modelValue)) ? +modelValue : modelValue).format(dateFormat)
+  }
+}
+
+export const getYearValue = (modelValue: string | null) => {
+  if (!modelValue) {
+    return ''
+  } else if (!dayjs(modelValue).isValid()) {
+    return ''
+  } else {
+    return dayjs(modelValue.toString(), 'YYYY').format('YYYY')
+  }
+}
+
+export const getDateTimeValue = (modelValue: string | null, params: ParsePlainCellValueProps['params']) => {
+  const { col, isMssql, isXcdbBase } = params
+
+  if (!modelValue || !dayjs(modelValue).isValid()) {
+    return ''
+  }
+
+  const columnMeta = parseProp(col.meta)
+
+  const dateFormat = columnMeta?.date_format ?? dateFormats[0]
+  const timeFormat = columnMeta?.time_format ?? timeFormats[0]
+  const is12hrFormat = columnMeta?.is12hrFormat
+  const dateTimeFormat = `${dateFormat} ${is12hrFormat ? timeFormatsObj[timeFormat] : timeFormat}`
+
+  const isXcDB = isXcdbBase(col.source_id)
+
+  if (!isXcDB) {
+    return dayjs(/^\d+$/.test(modelValue) ? +modelValue : modelValue).format(dateTimeFormat)
+  }
+
+  if (isMssql(col.source_id)) {
+    // e.g. 2023-04-29T11:41:53.000Z
+    return dayjs(modelValue, dateTimeFormat).format(dateTimeFormat)
+  } else {
+    return dayjs(modelValue).utc().local().format(dateTimeFormat)
+  }
+}
+
+export const getTimeValue = (modelValue: string | null, col: ColumnType) => {
+  const timeFormat = parseProp(col?.meta)?.is12hrFormat ? 'hh:mm A' : 'HH:mm'
+
+  if (!modelValue) {
+    return ''
+  }
+  let time = dayjs(modelValue)
+
+  if (!time.isValid()) {
+    time = dayjs(modelValue, 'HH:mm:ss')
+  }
+  if (!time.isValid()) {
+    time = dayjs(`1999-01-01 ${modelValue}`)
+  }
+  if (!time.isValid()) {
+    return ''
+  }
+
+  return time.format(timeFormat)
+}
+
+export const getDurationValue = (modelValue: string | null, col: ColumnType) => {
+  const durationType = parseProp(col.meta)?.duration || 0
+  return convertMS2Duration(modelValue, durationType)
+}
+
+export const getPercentValue = (modelValue: string | null) => {
+  return modelValue ? `${modelValue}%` : ''
+}
+
+export const getCurrencyValue = (modelValue: string | number | null | undefined, col: ColumnType): string => {
+  const currencyMeta = {
+    currency_locale: 'en-US',
+    currency_code: 'USD',
+    ...parseProp(col.meta),
+  }
+
+  try {
+    if (modelValue === null || modelValue === undefined || isNaN(modelValue)) {
+      return modelValue === null || modelValue === undefined ? '' : (modelValue as string)
+    }
+    return new Intl.NumberFormat(currencyMeta.currency_locale || 'en-US', {
+      style: 'currency',
+      currency: currencyMeta.currency_code || 'USD',
+    }).format(+modelValue)
+  } catch (e) {
+    return modelValue as string
+  }
+}
+
+export const getUserValue = (modelValue: string | string[] | null | Array<any>, params: ParsePlainCellValueProps['params']) => {
+  const { meta, baseUsers: baseUsersMap = new Map() } = params
+  if (!modelValue) {
+    return ''
+  }
+  const baseUsers = meta?.base_id ? baseUsersMap.get(meta?.base_id) || [] : []
+
+  if (typeof modelValue === 'string') {
+    const idsOrMails = modelValue.split(',')
+
+    return idsOrMails
+      .map((idOrMail) => {
+        const user = baseUsers.find((u) => u.id === idOrMail || u.email === idOrMail)
+        return user ? user.display_name || user.email : idOrMail.id
+      })
+      .join(', ')
+  } else {
+    if (Array.isArray(modelValue)) {
+      return modelValue
+        .map((idOrMail) => {
+          const user = baseUsers.find((u) => u.id === idOrMail.id || u.email === idOrMail.email)
+          return user ? user.display_name || user.email : idOrMail.id
+        })
+        .join(', ')
+    } else {
+      return modelValue ? modelValue.display_name || modelValue.email : ''
+    }
+  }
+}
+
+export const getDecimalValue = (modelValue: string | null | number, col: ColumnType) => {
+  if (!modelValue || isNaN(Number(modelValue))) {
+    return ''
+  }
+  const columnMeta = parseProp(col.meta)
+
+  return Number(modelValue).toFixed(columnMeta?.precision ?? 1)
+}
+
+export const getIntValue = (modelValue: string | null | number) => {
+  if (!modelValue || isNaN(Number(modelValue))) {
+    return ''
+  }
+  return Number(modelValue) as unknown as string
+}
+
+export const getTextAreaValue = (modelValue: string | null, col: ColumnType) => {
+  const isRichMode = parseProp(col.meta).richMode
+  if (isRichMode) {
+    return modelValue?.replace(/[*_~\[\]]|<\/?[^>]+(>|$)/g, '') || ''
+  }
+
+  if (isAIPromptCol(col)) {
+    return (modelValue as AIRecordType)?.value || ''
+  }
+
+  return modelValue || ''
+}
+
+export const getRollupValue = (modelValue: string | null | number, params: ParsePlainCellValueProps['params']) => {
+  const { col, meta, metas } = params
+
+  const colOptions = col.colOptions as RollupType
+  const relationColumnOptions = colOptions.fk_relation_column_id
+    ? (meta?.columns?.find((c) => c.id === colOptions.fk_relation_column_id)?.colOptions as LinkToAnotherRecordType)
+    : null
+  const relatedTableMeta =
+    relationColumnOptions?.fk_related_model_id && metas?.[relationColumnOptions.fk_related_model_id as string]
+
+  const childColumn = relatedTableMeta?.columns.find((c: ColumnType) => c.id === colOptions.fk_rollup_column_id) as
+    | ColumnType
+    | undefined
+
+  if (!childColumn) return modelValue?.toString() ?? ''
+
+  const renderAsTextFun = getRenderAsTextFunForUiType((childColumn.uidt ?? UITypes.SingleLineText) as UITypes)
+
+  childColumn.meta = {
+    ...parseProp(childColumn?.meta),
+    ...parseProp(col?.meta),
+  }
+
+  if (renderAsTextFun.includes(colOptions.rollup_function ?? '')) {
+    childColumn.uidt = UITypes.Decimal
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  return parsePlainCellValue(modelValue, { ...params, col: childColumn }) as string
+}
+
+export const getLookupValue = (modelValue: string | null | number | Array<any>, params: ParsePlainCellValueProps['params']) => {
+  const { col, meta, metas } = params
+
+  const colOptions = col.colOptions as LookupType
+  const relationColumnOptions = colOptions.fk_relation_column_id
+    ? meta?.columns?.find((c) => c.id === colOptions.fk_relation_column_id)?.colOptions
+    : null
+  const relatedTableMeta =
+    relationColumnOptions?.fk_related_model_id && metas?.[relationColumnOptions.fk_related_model_id as string]
+
+  const childColumn = relatedTableMeta?.columns.find((c: ColumnType) => c.id === colOptions.fk_lookup_column_id) as
+    | ColumnType
+    | undefined
+
+  if (Array.isArray(modelValue)) {
+    return modelValue
+      .map((v) => {
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        return parsePlainCellValue(v, { ...params, col: childColumn! })
+      })
+      .join(', ')
+  }
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  return parsePlainCellValue(modelValue, { ...params, col: childColumn! })
+}
+
+export function getLookupColumnType(
+  col: ColumnType,
+  meta: { columns: ColumnType[] },
+  metas: Record<string, any>,
+  visitedIds = new Set<string>(),
+): UITypes | null | undefined {
+  const colOptions = col.colOptions as LookupType
+  const relationColumnOptions = colOptions.fk_relation_column_id
+    ? meta?.columns?.find((c) => c.id === colOptions.fk_relation_column_id)?.colOptions
+    : null
+  const relatedTableMeta =
+    relationColumnOptions?.fk_related_model_id && metas?.[relationColumnOptions.fk_related_model_id as string]
+
+  const childColumn = relatedTableMeta?.columns.find((c: ColumnType) => c.id === colOptions.fk_lookup_column_id) as
+    | ColumnType
+    | undefined
+
+  // if child column is lookup column, then recursively find the column type
+  // and check for circular dependency
+  if (childColumn && childColumn.uidt === UITypes.Lookup && !visitedIds.has(childColumn.id)) {
+    visitedIds.add(childColumn.id)
+    return getLookupColumnType(childColumn, relatedTableMeta, metas, visitedIds)
+  }
+
+  return (childColumn?.uidt as UITypes) || null
+}
+
+export const getAttachmentValue = (modelValue: string | null | number | Array<any>) => {
+  if (Array.isArray(modelValue)) {
+    return modelValue.map((v) => `${v.title}`).join(', ')
+  }
+  return modelValue as string
+}
+
+export const getLinksValue = (modelValue: string, params: ParsePlainCellValueProps['params']) => {
+  const { col, t } = params
+
+  if (typeof col.meta === 'string') {
+    col.meta = JSON.parse(col.meta)
+  }
+
+  const parsedValue = +modelValue || 0
+  if (!parsedValue) {
+    return ''
+  } else if (parsedValue === 1) {
+    return `1 ${col?.meta?.singular || t('general.link')}`
+  } else {
+    return `${parsedValue} ${col?.meta?.plural || t('general.links')}`
+  }
+}
+
+export const parsePlainCellValue = (
+  value: ParsePlainCellValueProps['value'],
+  params: ParsePlainCellValueProps['params'],
+): string => {
+  const { col, abstractType, isUnderLookup } = params
+
+  if (!col) {
+    return ''
+  }
+  if (isGeoData(col)) {
+    const [latitude, longitude] = ((value as string) || '').split(';')
+    return latitude && longitude ? `${latitude}; ${longitude}` : value
+  }
+  if (isTextArea(col)) {
+    return getTextAreaValue(value, col)
+  }
+  if (isBoolean(col, abstractType)) {
+    return getCheckBoxValue(value) ? 'Checked' : 'Unchecked'
+  }
+  if (isMultiSelect(col)) {
+    return getMultiSelectValue(value, params)
+  }
+  if (isDate(col, abstractType)) {
+    return getDateValue(value, col)
+  }
+  if (isYear(col, abstractType)) {
+    return getYearValue(value)
+  }
+  if (isDateTime(col, abstractType)) {
+    return getDateTimeValue(value, params)
+  }
+  if (isTime(col, abstractType)) {
+    return getTimeValue(value, col)
+  }
+  if (isDuration(col)) {
+    return getDurationValue(value, col)
+  }
+  if (isPercent(col)) {
+    return getPercentValue(value)
+  }
+  if (isCurrency(col)) {
+    return getCurrencyValue(value, col)
+  }
+  if (isUser(col)) {
+    return getUserValue(value, params)
+  }
+  if (isDecimal(col)) {
+    return getDecimalValue(value, col)
+  }
+  if (isInt(col, abstractType)) {
+    return getIntValue(value)
+  }
+  if (isJSON(col)) {
+    try {
+      if (isUnderLookup) {
+        return typeof value === 'string' ? JSON.stringify(JSON.parse(value)) : JSON.stringify(value)
+      } else {
+        return JSON.stringify(JSON.parse(value), null, 2)
+      }
+    } catch {
+      return value
+    }
+  }
+  if (isRollup(col)) {
+    return getRollupValue(value, params)
+  }
+  if (isLookup(col) || isLTAR(col.uidt, col.colOptions)) {
+    return getLookupValue(value, params)
+  }
+  if (isCreatedOrLastModifiedTimeCol(col)) {
+    return getDateTimeValue(value, params)
+  }
+  if (isCreatedOrLastModifiedByCol(col)) {
+    return getUserValue(value, params)
+  }
+  if (isAttachment(col)) {
+    return getAttachmentValue(value)
+  }
+  if (isLink(col)) {
+    return getLinksValue(value, col)
+  }
+
+  if (isFormula(col) && col?.meta?.display_type) {
+    const childColumn = {
+      uidt: col?.meta?.display_type,
+      ...col?.meta?.display_column_meta,
+    }
+    return parsePlainCellValue(value, { ...params, col: childColumn })
+  }
+
+  if (isButton(col)) {
+    if ((col.colOptions as ButtonType).type === 'url') return value
+    else return col.colOptions?.label
+  }
+
+  return value as unknown as string
 }

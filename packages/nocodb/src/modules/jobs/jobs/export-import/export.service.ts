@@ -9,11 +9,21 @@ import {
 import { unparse } from 'papaparse';
 import debug from 'debug';
 import { Injectable } from '@nestjs/common';
+import { NcApiVersion } from 'nocodb-sdk';
 import { elapsedTime, initTime } from '../../helpers';
 import type { BaseModelSqlv2 } from '~/db/BaseModelSqlv2';
 import type { NcContext } from '~/interface/config';
 import type { LinkToAnotherRecordColumn } from '~/models';
-import { Base, Comment, Filter, Hook, Model, Source, View } from '~/models';
+import {
+  Base,
+  BaseUser,
+  Comment,
+  Filter,
+  Hook,
+  Model,
+  Source,
+  View,
+} from '~/models';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 import {
   getViewAndModelByAliasOrId,
@@ -43,6 +53,7 @@ export class ExportService {
       excludeHooks?: boolean;
       excludeData?: boolean;
       excludeComments?: boolean;
+      compatibilityMode?: boolean;
     },
   ) {
     const { modelIds } = param;
@@ -52,6 +63,8 @@ export class ExportService {
     const excludeHooks = param?.excludeHooks || false;
     const excludeComments =
       param?.excludeComments || param?.excludeData || false;
+
+    const compatibilityMode = param?.compatibilityMode || false;
 
     const serializedModels = [];
 
@@ -195,6 +208,9 @@ export class ExportService {
                 );
                 break;
               case 'fk_webhook_id':
+                column.colOptions[k] = idMap.get(v as string);
+                break;
+              case 'fk_script_id':
                 column.colOptions[k] = idMap.get(v as string);
                 break;
               case 'id':
@@ -454,11 +470,6 @@ export class ExportService {
             id: idMap.get(column.id),
             ai: column.ai,
             column_name: column.column_name,
-            cc: column.cc,
-            cdf: column.cdf,
-            dt: column.dt,
-            dtxp: column.dtxp,
-            dtxs: column.dtxs,
             meta: column.meta,
             pk: column.pk,
             pv: column.pv,
@@ -470,6 +481,13 @@ export class ExportService {
             un: column.un,
             unique: column.unique,
             colOptions: column.colOptions,
+            ...(!compatibilityMode && {
+              cc: column.cc,
+              dt: column.dt,
+              dtxp: column.dtxp,
+              dtxs: column.dtxs,
+              cdf: column.cdf,
+            }),
           })),
         },
         views: model.views.map((view) => ({
@@ -511,6 +529,25 @@ export class ExportService {
     }
 
     return serializedModels;
+  }
+
+  async serializeUsers(context: NcContext, param: { baseId: string }) {
+    const { baseId } = param;
+
+    const base = await Base.get(context, baseId);
+
+    if (!base) return NcError.baseNotFound(baseId);
+
+    const users = await BaseUser.getUsersList(context, { base_id: base.id });
+
+    const serializedUsers = users.map((user) => ({
+      email: user.email,
+      display_name: user.display_name,
+      base_role: user.roles,
+      workspace_role: (user as any).workspace_roles,
+    }));
+
+    return serializedUsers;
   }
 
   async streamModelDataAsCsv(
@@ -575,11 +612,7 @@ export class ExportService {
       ? model.columns
           .filter((c) => param._fieldIds?.includes(c.id))
           .map((c) => c.title)
-          .join(',')
-      : model.columns
-          .filter((c) => !isLinksOrLTAR(c))
-          .map((c) => c.title)
-          .join(',');
+      : model.columns.filter((c) => !isLinksOrLTAR(c)).map((c) => c.title);
 
     if (dataExportMode) {
       const viewCols = await view.getColumns(context);
@@ -587,8 +620,7 @@ export class ExportService {
       fields = viewCols
         .sort((a, b) => a.order - b.order)
         .filter((c) => c.show)
-        .map((vc) => model.columns.find((c) => c.id === vc.fk_column_id).title)
-        .join(',');
+        .map((vc) => model.columns.find((c) => c.id === vc.fk_column_id).title);
     }
 
     const mmColumns = param._fieldIds
@@ -640,12 +672,12 @@ export class ExportService {
               case UITypes.CreatedBy:
               case UITypes.LastModifiedBy:
                 if (v) {
-                  const userIds = [];
+                  const userEmails = [];
                   const userRecord = Array.isArray(v) ? v : [v];
                   for (const user of userRecord) {
-                    userIds.push(user.id);
+                    userEmails.push(user.email);
                   }
-                  row[colId] = userIds.join(',');
+                  row[colId] = userEmails.join(',');
                 } else {
                   row[colId] = v;
                 }
@@ -657,6 +689,14 @@ export class ExportService {
               case UITypes.Barcode:
               case UITypes.QrCode:
                 // skip these types
+                break;
+              case UITypes.JSON:
+                try {
+                  row[colId] = JSON.stringify(v);
+                } catch (e) {
+                  // avoid exporting invalid JSON
+                  row[colId] = null;
+                }
                 break;
               default:
                 row[colId] = v;
@@ -739,8 +779,7 @@ export class ExportService {
 
         const mmFields = mmModel.columns
           .filter((c) => c.uidt === UITypes.ForeignKey)
-          .map((c) => c.title)
-          .join(',');
+          .map((c) => c.title);
 
         const mmFormatData = (data: any) => {
           data.map((d) => {
@@ -806,7 +845,7 @@ export class ExportService {
     view: View,
     offset: number,
     limit: number,
-    fields: string,
+    fields: string[],
     header = false,
     delimiter = ',',
     dataExportMode = false,
@@ -895,7 +934,7 @@ export class ExportService {
     view: View,
     offset: number,
     limit: number,
-    fields: string,
+    fields: string[],
     header = false,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -907,6 +946,7 @@ export class ExportService {
           baseModel,
           ignoreViewFilterAndSort: true,
           limitOverride: limit,
+          apiVersion: NcApiVersion.V1,
         })
         .then((result) => {
           try {

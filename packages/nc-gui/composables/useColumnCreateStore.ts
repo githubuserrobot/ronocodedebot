@@ -1,6 +1,6 @@
 import rfdc from 'rfdc'
 import type { ColumnReqType, ColumnType, TableType } from 'nocodb-sdk'
-import { ButtonActionsType, UITypes, isAIPromptCol, isLinksOrLTAR } from 'nocodb-sdk'
+import { ButtonActionsType, UITypes, isAIPromptCol, isLinksOrLTAR, isSystemColumn } from 'nocodb-sdk'
 import type { Ref } from 'vue'
 import type { RuleObject } from 'ant-design-vue/es/form'
 import { generateUniqueColumnName } from '~/helpers/parsers/parserHelpers'
@@ -8,8 +8,6 @@ import { generateUniqueColumnName } from '~/helpers/parsers/parserHelpers'
 const clone = rfdc()
 
 const useForm = Form.useForm
-
-const columnToValidate = [UITypes.Email, UITypes.URL, UITypes.PhoneNumber]
 
 interface ValidationsObj {
   [key: string]: RuleObject[]
@@ -46,7 +44,7 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
 
     const { activeView } = storeToRefs(viewsStore)
 
-    const { xWhere, view } = useSmartsheetStoreOrThrow()
+    const { xWhere, view, eventBus } = useSmartsheetStoreOrThrow()
 
     const { formattedData, loadData } = useViewData(meta, view, xWhere)
 
@@ -55,6 +53,8 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
     const disableSubmitBtn = ref(false)
 
     const isWebhookCreateModalOpen = ref(false)
+
+    const isScriptCreateModalOpen = ref(false)
 
     const isAiButtonConfigModalOpen = ref(false)
 
@@ -65,6 +65,8 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
     const isPg = computed(() => isPgFunc(meta.value?.source_id ? meta.value?.source_id : Object.keys(sqlUis.value)[0]))
 
     const isMssql = computed(() => isMssqlFunc(meta.value?.source_id ? meta.value?.source_id : Object.keys(sqlUis.value)[0]))
+
+    const isSystem = computed(() => isSystemColumn(column.value))
 
     const isXcdbBase = computed(() =>
       isXcdbBaseFunc(meta.value?.source_id ? meta.value?.source_id : Object.keys(sqlUis.value)[0]),
@@ -275,6 +277,20 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
             message: t('msg.error.uiDataTypeRequired'),
           },
         ],
+        cdf: [
+          {
+            validator: (rule: any, value: any) => {
+              return new Promise<void>((resolve, reject) => {
+                const columnValidationError = getColumnValidationError(formState.value, value)
+                if (columnValidationError) {
+                  return reject(new Error(t(columnValidationError)))
+                }
+
+                resolve()
+              })
+            },
+          },
+        ],
         ...(additionalValidations?.value || {}),
       }
     })
@@ -323,12 +339,16 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
       if (cdf) formState.value.cdf = formState.value.cdf || null
     }
 
-    const addOrUpdate = async (onSuccess: () => Promise<void>, columnPosition?: Pick<ColumnReqType, 'column_order'>) => {
+    const addOrUpdate = async (
+      onSuccess: (col?: ColumnType) => Promise<void>,
+      columnPosition?: Pick<ColumnReqType, 'column_order'>,
+    ) => {
       try {
         if (!(await validate())) return
       } catch (e: any) {
-        const errorMsgs = e.errorFields
-          ?.map((e: any) => e.errors?.join(', '))
+        const errorMsgs = (e.errorFields || [])
+          .filter((f) => f?.name !== 'cdf')
+          .map((e: any) => e.errors?.join(', '))
           .filter(Boolean)
           .join(', ')
 
@@ -343,6 +363,9 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
         }
       }
 
+      let savedColumn: ColumnType | undefined
+      let oldCol: ColumnType | undefined
+
       try {
         formState.value.table_name = meta.value?.table_name
 
@@ -355,8 +378,17 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
             formState.value.validate = ''
           }
 
+          // ignore filters from payload since it's not required
+          const { filters: _, ...updateData } = formState.value
+
           try {
-            await $api.dbTableColumn.update(column.value?.id as string, formState.value)
+            oldCol = column.value
+            await $api.dbTableColumn.update(column.value?.id as string, updateData)
+
+            if (oldCol && [UITypes.Date, UITypes.DateTime, UITypes.CreatedTime, UITypes.LastModifiedTime].includes(oldCol.uidt)) {
+              viewsStore.loadViews({ tableId: oldCol?.fk_model_id, ignoreLoading: true, force: true })
+            }
+            eventBus.emit(SmartsheetStoreEvents.FIELD_UPDATE)
           } catch (e: any) {
             if (!validateInfos.formula_raw) validateInfos.formula_raw = {}
             validateInfos.formula_raw!.validateStatus = 'error'
@@ -364,6 +396,7 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
               validateInfos.formula_raw!.help = []
             }
             validateInfos.formula_raw?.help.push(await extractSdkResponseErrorMsg(e))
+            message.error(await extractSdkResponseErrorMsg(e))
             return
           }
 
@@ -404,7 +437,7 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
             view_id: activeView.value!.id as string,
           })
 
-          const savedColumn = tableMeta.columns?.find(
+          savedColumn = tableMeta.columns?.find(
             (c) => c.title === formState.value.title || c.column_name === formState.value.column_name,
           )
 
@@ -421,17 +454,16 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
 
           // Column created
           // message.success(t('msg.success.columnCreated'))
-
           $e('a:column:add', { datatype: formState.value.uidt })
         }
-        await onSuccess?.()
+        await onSuccess?.(savedColumn)
         return true
       } catch (e: any) {
         message.error(await extractSdkResponseErrorMsg(e))
       }
     }
 
-    function updateFieldName(updateFormState: boolean = true) {
+    function updateFieldName(updateFormState = true) {
       if (
         formState.value?.is_ai_field ||
         isEdit.value ||
@@ -482,6 +514,7 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
       isWebhookCreateModalOpen,
       isAiButtonConfigModalOpen,
       isMysql,
+      isSystem,
       isXcdbBase,
       disableSubmitBtn,
       setPostSaveOrUpdateCbk,
@@ -492,6 +525,7 @@ const [useProvideColumnCreateStore, useColumnCreateStore] = createInjectionState
       loadData,
       tableExplorerColumns,
       defaultFormState,
+      isScriptCreateModalOpen,
     }
   },
 )

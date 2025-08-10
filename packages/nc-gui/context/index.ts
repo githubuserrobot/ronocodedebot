@@ -1,12 +1,16 @@
 import type { ColumnType, FilterType, SourceType, TableType, ViewType } from 'nocodb-sdk'
-import type { ComputedRef, InjectionKey, Ref } from 'vue'
+import type { ComputedRef, Reactive, Ref } from 'vue'
 import type { EventHook } from '@vueuse/core'
 import type { PageSidebarNode } from '#imports'
+
+export type ExtractInjectedRef<T> = T extends InjectionKey<Ref<infer U>> ? U : never
+export type ExtractInjectedReactive<T> = T extends InjectionKey<Reactive<infer U>> ? U : never
 
 export const ActiveCellInj: InjectionKey<Ref<boolean>> = Symbol('active-cell')
 export const IsPublicInj: InjectionKey<Ref<boolean>> = Symbol('is-public')
 export const RowInj: InjectionKey<Ref<Row>> = Symbol('row')
 export const ColumnInj: InjectionKey<Ref<ColumnType>> = Symbol('column-injection')
+export const CanvasColumnInj: InjectionKey<Ref<ColumnType>> = Symbol('canvas-column-injection')
 export const MetaInj: InjectionKey<ComputedRef<TableType> | Ref<TableType>> = Symbol('meta-injection')
 export const TabMetaInj: InjectionKey<ComputedRef<TabItem> | Ref<TabItem>> = Symbol('tab-meta-injection')
 export const IsFormInj: InjectionKey<Ref<boolean>> = Symbol('is-form-injection')
@@ -23,11 +27,19 @@ export const IsExpandedBulkUpdateFormOpenInj: InjectionKey<Ref<boolean>> = Symbo
 export const CellValueInj: InjectionKey<Ref<any>> = Symbol('cell-value-injection')
 export const ActiveViewInj: InjectionKey<Ref<ViewType>> = Symbol('active-view-injection')
 export const ReadonlyInj: InjectionKey<Ref<boolean>> = Symbol('readonly-injection')
+export const RawReadonlyInj: InjectionKey<Ref<boolean>> = Symbol('raw-readonly-injection')
 export const RowHeightInj: InjectionKey<Ref<1 | 2 | 4 | 6 | undefined>> = Symbol('row-height-injection')
 export const ScrollParentInj: InjectionKey<Ref<HTMLElement | undefined>> = Symbol('scroll-parent-injection')
 /** when shouldShowLoading bool is passed, it indicates if a loading spinner should be visible while reloading */
 export const ReloadViewDataHookInj: InjectionKey<
-  EventHook<{ shouldShowLoading?: boolean; offset?: number; isFormFieldFilters?: boolean } | void>
+  EventHook<{
+    shouldShowLoading?: boolean
+    offset?: number
+    isFormFieldFilters?: boolean
+    isFromLinkRecord?: boolean
+    relatedTableMetaId?: string
+    rowId?: string
+  } | void>
 > = Symbol('reload-view-data-injection')
 export const ReloadViewMetaHookInj: InjectionKey<EventHook<boolean | void>> = Symbol('reload-view-meta-injection')
 export const ReloadVisibleDataHookInj: InjectionKey<EventHook<void>> = Symbol('reload-visible-data-injection')
@@ -51,9 +63,14 @@ export const SharedViewPasswordInj: InjectionKey<Ref<string | null>> = Symbol('s
 export const CellUrlDisableOverlayInj: InjectionKey<Ref<boolean>> = Symbol('cell-url-disable-url')
 export const DropZoneRef: InjectionKey<Ref<Element | undefined>> = Symbol('drop-zone-ref')
 export const CellClickHookInj: InjectionKey<EventHook<MouseEvent> | undefined> = Symbol('cell-click-injection')
+export const CellEventHookInj: InjectionKey<EventHook<MouseEvent | KeyboardEvent | PointerEvent> | undefined> =
+  Symbol('cell-event-injection')
+export const OnDivDataCellEventHookInj: InjectionKey<EventHook<Event> | undefined> = Symbol('on-div-data-cell-event-injection')
 export const SaveRowInj: InjectionKey<(() => void) | undefined> = Symbol('save-row-injection')
 export const CurrentCellInj: InjectionKey<Ref<Element | undefined>> = Symbol('current-cell-injection')
 export const IsUnderLookupInj: InjectionKey<Ref<boolean>> = Symbol('is-under-lookup-injection')
+export const IsUnderFormulaInj: InjectionKey<Ref<boolean>> = Symbol('is-under-ltar-injection')
+export const IsUnderLTARInj: InjectionKey<Ref<boolean>> = Symbol('is-under-lookup-injection')
 export const DocsLocalPageInj: InjectionKey<Ref<PageSidebarNode | undefined>> = Symbol('docs-local-page-injection')
 export const ProjectRoleInj: InjectionKey<Ref<string | string[]>> = Symbol('base-roles-injection')
 export const ProjectStarredModeInj: InjectionKey<Ref<boolean>> = Symbol('base-starred-injection')
@@ -73,6 +90,7 @@ export const TreeViewInj: InjectionKey<{
     disableTitleDiffCheck?: boolean,
   ) => void
   openViewDescriptionDialog: (view: ViewType) => void
+  openAutomationDescriptionDialog?: (automation: any) => void
   openTableDescriptionDialog: (table: TableType) => void
   contextMenuTarget: { type?: 'base' | 'base' | 'table' | 'main' | 'layout'; value?: any }
   tableRenameId: Ref<string>
@@ -97,3 +115,19 @@ export const ActiveSourceInj: InjectionKey<
 export const IsToolbarIconMode: InjectionKey<ComputedRef<boolean>> = Symbol('toolbar-icon-mode-injection')
 export const FieldNameAlias: InjectionKey<ComputedRef<Record<string, string>> | Ref<Record<string, string>>> =
   Symbol('field-name-alias')
+export const IsCanvasInjectionInj: InjectionKey<boolean> = Symbol('is-canvas-injection')
+export const ClientMousePositionInj: InjectionKey<Reactive<{ clientX: number; clientY: number }>> = Symbol(
+  'client-mouse-position-injection',
+)
+export const CanvasCellEventDataInj: InjectionKey<
+  Reactive<{
+    keyboardKey?: string
+    event?: KeyboardEvent | MouseEvent | PointerEvent
+  }>
+> = Symbol('canvas-cell-event-data-injection')
+
+// triggering this hook from within an editable cell will turn it into "selection state"
+export const CanvasSelectCellInj: InjectionKey<EventHook | undefined> = Symbol('canvas-select-cell-inj')
+
+export const IsPageDesignerExtensionActiveInj: InjectionKey<boolean> = Symbol('is-page-designer-extension-active')
+export const IsLinkRecordDropdownInj: InjectionKey<Ref<boolean>> = Symbol('is-link-record-dropdown-injection')

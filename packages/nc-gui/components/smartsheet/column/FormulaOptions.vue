@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  ColumnHelper,
   FormulaDataTypes,
   FormulaError,
   UITypes,
@@ -19,6 +20,12 @@ const emit = defineEmits(['update:value'])
 const uiTypesNotSupportedInFormulas = [UITypes.QrCode, UITypes.Barcode, UITypes.Button]
 
 const vModel = useVModel(props, 'value', emit)
+
+// set default value
+vModel.value.meta = {
+  ...ColumnHelper.getColumnDefaultMeta(UITypes.Formula),
+  ...(vModel.value.meta || {}),
+}
 
 const { setAdditionalValidations, sqlUi, column, validateInfos } = useColumnCreateStoreOrThrow()
 
@@ -225,13 +232,12 @@ watch(
               v-model:value="vModel.meta.display_type"
               class="w-full nc-select-shadow"
               :placeholder="$t('labels.selectAFormatType')"
+              allow-clear
               @change="
                 (v) => {
-
                   savedDisplayType = v
                 }
               "
-              allow-clear
             >
               <a-select-option v-for="option in supportedFormulaAlias" :key="option.value" :value="option.value">
                 <div class="flex w-full items-center gap-2 justify-between">

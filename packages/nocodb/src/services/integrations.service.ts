@@ -55,6 +55,7 @@ export class IntegrationsService {
       'swagger.json#/components/schemas/IntegrationReq',
       param.integration,
     );
+    const oldIntegration = await Integration.get(context, param.integrationId);
 
     const integrationBody = param.integration;
     const integration = await Integration.updateIntegration(
@@ -75,6 +76,11 @@ export class IntegrationsService {
       integration,
       req: param.req,
       user: param.req?.user,
+      oldIntegration,
+      context: {
+        ...context,
+        base_id: null,
+      },
     });
 
     return integration;
@@ -92,8 +98,6 @@ export class IntegrationsService {
       userId: param.req.user?.id,
       includeDatabaseInfo: param.includeDatabaseInfo,
       type: param.type,
-      limit: param.limit,
-      offset: param.offset,
       includeSourceCount: true,
       query: param.query,
     });
@@ -157,6 +161,10 @@ export class IntegrationsService {
         integration,
         req: param.req,
         user: param.req?.user,
+        context: {
+          ...context,
+          base_id: null,
+        },
       });
 
       await ncMeta.commit();
@@ -227,6 +235,7 @@ export class IntegrationsService {
     } catch (e) {
       NcError.badRequest(e);
     }
+
     return true;
   }
 
@@ -269,8 +278,6 @@ export class IntegrationsService {
         includeDatabaseInfo: true,
         type: IntegrationsType.Database,
         sub_type: ClientType.SQLITE,
-        limit: 1000,
-        offset: 0,
         includeSourceCount: false,
         query: '',
       });
@@ -297,8 +304,6 @@ export class IntegrationsService {
         (
           await Integration.list({
             userId: param.req.user?.id,
-            limit: 1000,
-            offset: 0,
             includeSourceCount: false,
             query: '',
           })
@@ -322,6 +327,10 @@ export class IntegrationsService {
       integration,
       req: param.req,
       user: param.req?.user,
+      context: {
+        ...context,
+        base_id: null,
+      },
     });
 
     return integration;

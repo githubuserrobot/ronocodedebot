@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import tippy from 'tippy.js'
 import { type CommentType, ProjectRoles } from 'nocodb-sdk'
 
 const { user, appInfo } = useGlobal()
@@ -30,6 +31,7 @@ const {
   updateComment,
   saveComment: _saveComment,
   primaryKey,
+  parsedHtmlComments,
 } = useRowCommentsOrThrow()
 
 const editCommentValue = ref<CommentType>()
@@ -49,6 +51,8 @@ const comment = ref('')
 const router = useRouter()
 
 const baseUsers = computed(() => (meta.value?.base_id ? basesUser.value.get(meta.value?.base_id) || [] : []))
+
+const debouncedLoadCommentEditedTooltip = useDebounceFn(loadCommentEditedTooltip, 1000)
 
 function scrollComments() {
   if (commentsWrapperEl.value) {
@@ -175,6 +179,7 @@ async function onEditComment() {
   await updateComment(tempCom.id!, {
     comment: tempCom.comment,
   })
+
   loadComments()
 }
 
@@ -192,14 +197,6 @@ const createdBy = (
   } else {
     return 'Shared source'
   }
-}
-
-const editedAt = (comment: CommentType) => {
-  if (comment.updated_at !== comment.created_at && comment.updated_at) {
-    const str = timeAgo(comment.updated_at).replace(' ', '_')
-    return `[(edited)](a~~~###~~~Edited_${str}) `
-  }
-  return ''
 }
 
 function handleResetHoverEffect() {
@@ -237,6 +234,51 @@ const getUserRole = (email: string) => {
 
   return user.roles || ProjectRoles.NO_ACCESS
 }
+
+const tooltipInstances: any[] = []
+
+function loadCommentEditedTooltip() {
+  resetTooltipInstances()
+
+  document.querySelectorAll('.nc-rich-link-tooltip').forEach((el) => {
+    const tooltip = Object.values(el.attributes).find((attr) => attr.name === 'data-tooltip')
+    if (!tooltip) return
+
+    const instance = tippy(el, {
+      content: `<span class="tooltip nc-rich-link-tooltip-popup">${tooltip.value}</span>`,
+      placement: 'top',
+      allowHTML: true,
+      arrow: true,
+      animation: 'fade',
+      duration: 0,
+    })
+
+    tooltipInstances.push(instance)
+  })
+}
+
+function resetTooltipInstances() {
+  tooltipInstances.forEach((instance) => instance?.destroy())
+  tooltipInstances.length = 0
+}
+
+const handleKeyPress = (event: KeyboardEvent) => {
+  if (event.key !== 'Escape') {
+    event.stopPropagation()
+  }
+}
+
+watch(
+  comments,
+  () => {
+    debouncedLoadCommentEditedTooltip()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  resetTooltipInstances()
+})
 </script>
 
 <template>
@@ -260,9 +302,14 @@ const getUserRole = (email: string) => {
       </div>
       <div v-else ref="commentsWrapperEl" class="flex flex-col h-full py-1 nc-scrollbar-thin">
         <div
-          v-for="commentItem of comments"
+          v-for="(commentItem, index) of comments"
           :key="commentItem.id"
-          :class="`${commentItem.id}`"
+          :class="[
+            {
+              'mt-auto': index === 0,
+            },
+            commentItem.id,
+          ]"
           class="nc-comment-item"
           @mouseover="handleResetHoverEffect"
         >
@@ -395,11 +442,11 @@ const getUserRole = (email: string) => {
                       <GeneralIcon class="text-md" icon="checkCircle" />
                     </NcButton>
 
-                    <template #title>Click to resolve </template>
+                    <template #title>{{ $t('activity.clickToResolve') }}</template>
                   </NcTooltip>
 
                   <NcTooltip v-else-if="commentItem.resolved_by">
-                    <template #title>{{ `Resolved by ${commentItem.resolved_display_name}` }}</template>
+                    <template #title>{{ `${$t('activity.resolvedBy')} ${commentItem.resolved_display_name}` }}</template>
                     <NcButton
                       class="!h-7 !w-7 !bg-transparent !hover:bg-gray-200 text-semibold"
                       size="xsmall"
@@ -422,12 +469,13 @@ const getUserRole = (email: string) => {
                 v-if="commentItem.id === editCommentValue?.id && hasEditPermission"
                 v-model:value="value"
                 autofocus
+                autofocus-to-end
                 :hide-options="false"
                 class="expanded-form-comment-edit-input cursor-text expanded-form-comment-input !py-2 !px-2 !m-0 w-full !border-1 !border-gray-200 !rounded-lg !bg-white !text-gray-800 !text-small !leading-18px !max-h-[240px]"
                 data-testid="expanded-form-comment-input"
-                sync-value-change
                 @save="onEditComment"
                 @keydown.esc="onCancel"
+                @keydown="handleKeyPress"
                 @blur="
                   () => {
                     editCommentValue = undefined
@@ -438,12 +486,10 @@ const getUserRole = (email: string) => {
               />
 
               <div v-else class="space-y-1 pl-9">
-                <SmartsheetExpandedFormRichComment
-                  :value="`${commentItem.comment}  ${editedAt(commentItem)}`"
-                  class="!text-small !leading-18px !text-gray-800 -ml-1"
-                  read-only
-                  sync-value-change
-                />
+                <div
+                  class="nc-rich-text-content !text-small !leading-18px !text-gray-800"
+                  v-html="parsedHtmlComments[commentItem.id]"
+                ></div>
               </div>
             </div>
           </div>
@@ -454,12 +500,12 @@ const getUserRole = (email: string) => {
           ref="commentInputRef"
           v-model:value="comment"
           :hide-options="false"
-          placeholder="Comment..."
+          :placeholder="`${$t('general.comment')}...`"
           class="expanded-form-comment-input !py-2 !px-2 cursor-text border-1 rounded-lg w-full bg-transparent !text-gray-800 !text-small !leading-18px !max-h-[240px]"
           :autofocus="isExpandedFormCommentMode"
           data-testid="expanded-form-comment-input"
           @focus="isExpandedFormCommentMode = false"
-          @keydown.stop
+          @keydown="handleKeyPress"
           @save="saveComment"
           @keydown.enter.exact.prevent="saveComment"
         />
@@ -491,5 +537,21 @@ const getUserRole = (email: string) => {
   .nc-resolve-comment-btn {
     @apply !block;
   }
+}
+
+:deep(.nc-rich-link-tooltip) {
+  @apply text-gray-500;
+}
+
+.nc-rich-text-content {
+  p {
+    @apply !m-0 !leading-5;
+  }
+}
+</style>
+
+<style lang="scss">
+.nc-rich-link-tooltip-popup {
+  @apply text-xs bg-gray-800 text-white px-2 py-1 rounded-lg;
 }
 </style>

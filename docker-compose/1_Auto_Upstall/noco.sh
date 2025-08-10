@@ -108,28 +108,28 @@ get_public_ip() {
 		fi
 	fi
 
-	# Method 2: Using curl
-	if command -v curl >/dev/null 2>&1; then
-		ip=$(curl -s -4 https://ifconfig.co 2>/dev/null)
-		if [ -n "$ip" ]; then
-			echo "$ip"
-			return
-		fi
-	fi
-
-	# Method 3: Using wget
-	if command -v wget >/dev/null 2>&1; then
-		ip=$(wget -qO- https://ifconfig.me 2>/dev/null)
-		if [ -n "$ip" ]; then
-			echo "$ip"
-			return
-		fi
-	fi
-
-	# Method 4: Using host
+	# Method 2: Using host
 	if command -v host >/dev/null 2>&1; then
 		ip=$(host myip.opendns.com resolver1.opendns.com 2>/dev/null | grep "myip.opendns.com has" | awk '{print $4}')
 		if [ -n "$ip" ]; then
+			echo "$ip"
+			return
+		fi
+	fi
+
+	# Method 3: Using curl
+	if command -v curl >/dev/null 2>&1; then
+		ip="$(curl -s -4 https://ip.me 2>/dev/null)"
+		if echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+			echo "$ip"
+			return
+		fi
+	fi
+
+	# Method 4: Using wget
+	if command -v wget >/dev/null 2>&1; then
+		ip="$(wget -qO- https://ifconfig.me 2>/dev/null)"
+		if echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
 			echo "$ip"
 			return
 		fi
@@ -610,6 +610,8 @@ EOF
     print_empty_line
   fi
 
+  set_default_options
+
   # Advanced Configuration
   if [ "$(prompt_oneof "Show Advanced Options?" "N" "Y")" = "Y" ]; then
     print_empty_line
@@ -622,7 +624,6 @@ EOF
     get_advanced_options
   else
     print_empty_line
-    set_default_options
   fi
 
   # Configuration Summary
@@ -743,6 +744,36 @@ EOF
     networks:
       - nocodb-network
 EOF
+
+  # If the edition is EE, add worker service to the compose file
+	if [ "$CONFIG_EDITION" = "EE" ]; then
+		cat >>"$compose_file" <<EOF
+  worker:
+    image: ${image}
+    env_file: docker.env
+    environment:
+      - NC_WORKER_CONTAINER=true
+    networks:
+      - nocodb-network
+EOF
+
+	  if [ -n "$gen_postgres" ] || [ -n "$gen_redis" ] || [ "$gen_redis" ]; then
+		  cat >>"$compose_file" <<EOF
+    depends_on:
+      ${gen_postgres:+- db}
+      ${gen_redis:+- redis}
+      ${gen_minio:+- minio}
+EOF
+  	fi
+
+    cat >>"$compose_file" <<EOF
+    restart: unless-stopped
+    volumes:
+      - ./nocodb:/usr/app/data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+EOF
+	fi
 
 	if [ "$CONFIG_POSTGRES_SQLITE" = "P" ]; then
 		cat >>"$compose_file" <<EOF
@@ -917,6 +948,14 @@ EOF
 REDIS_PASSWORD=${CONFIG_REDIS_PASSWORD}
 NC_REDIS_URL=redis://:${ENCODED_REDIS_PASSWORD}@redis:6379/0
 EOF
+
+		# If the edition is EE, configure the redis job URL and throttler redis
+		if [ "${CONFIG_EDITION}" = "EE" ]; then
+			cat >>"$env_file" <<EOF
+NC_REDIS_JOB_URL=redis://:${ENCODED_REDIS_PASSWORD}@redis:6379/1
+NC_THROTTLER_REDIS=redis://:${ENCODED_REDIS_PASSWORD}@redis:6379/2
+EOF
+		fi
 	fi
 
 	if [ "${CONFIG_MINIO_ENABLED}" = "Y" ]; then

@@ -13,6 +13,14 @@ import {
   ncIsUndefined,
 } from 'nocodb-sdk'
 
+const ncIsPlaywright = () => {
+  return !!(window as any)?.isPlaywright
+}
+
+const ncIsSharedViewOrBase = () => {
+  return localStorage.getItem('ncIsSharedViewOrBase') === 'true'
+}
+
 export {
   ncIsObject,
   ncIsEmptyObject,
@@ -26,4 +34,6 @@ export {
   ncIsFunction,
   ncIsPromise,
   ncIsArrayIncludes,
+  ncIsPlaywright,
+  ncIsSharedViewOrBase,
 }

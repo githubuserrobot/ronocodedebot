@@ -332,6 +332,8 @@ export class MetaService {
       [MetaTable.FILE_REFERENCES]: 'at',
       [MetaTable.COL_BUTTON]: 'btn',
       [MetaTable.SNAPSHOT]: 'snap',
+      [MetaTable.SCRIPTS]: 'scr',
+      [MetaTable.SYNC_CONFIGS]: 'sync',
     };
 
     const prefix = prefixMap[target] || 'nc';

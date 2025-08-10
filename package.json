@@ -43,7 +43,11 @@
     "prepare": "husky install",
     "preinstall": "npx only-allow pnpm",
     "registerIntegrations": "pnpm --filter=nocodb run registerIntegrations",
-    "install:local-sdk": "node scripts/installLocalSdk.js"
+    "install:local-sdk": "node scripts/installLocalSdk.js",
+    "dev:db": "bash ./scripts/dev/up.sh",
+    "dev:db:down": "bash ./scripts/dev/down.sh",
+    "dev:clone-cluster": "bash ./scripts/db/clone_cluster.sh",
+    "local:setup": "bash ./scripts/dev/local-setup.sh"
   },
   "pnpm": {
     "overrides": {

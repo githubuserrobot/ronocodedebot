@@ -101,3 +101,11 @@ httpbin
 
 # nix
 result
+
+# DB artifacts
+noco.db
+*.sqlite
+*.sqlite3
+*.db
+*.sql
+/tmp/

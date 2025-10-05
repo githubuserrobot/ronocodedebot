@@ -123,7 +123,7 @@ export default async function ({
     case RelationTypes.MANY_TO_MANY: {
       if (columnOptions instanceof LinksColumn) {
         try {
-          const qb = knex("nc_tdo8___Obstructions").select(1).first()
+          const qb = knex.queryBuilder().select(1).first()
           return {
             builder: qb,
           };

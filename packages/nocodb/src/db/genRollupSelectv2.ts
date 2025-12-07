@@ -218,15 +218,11 @@ export default async function ({
 
     case RelationTypes.MANY_TO_MANY: {
       if (columnOptions instanceof LinksColumn) {
-        try {
-          const qb = knex("nc_tdo8___Obstructions").select(1).first()
-          return {
-            builder: qb,
-          };
-        } catch (error) {
-          console.trace(error)
-          throw error
-        }
+        // Return a lightweight constant select without touching any table
+        const qb = knex.select(knex.raw('1')).first();
+        return {
+          builder: qb,
+        };
       }
 
       const mmModel = await relationColumnOption.getMMModel(context);
@@ -242,7 +238,7 @@ export default async function ({
       }
       const prejoined = "prejoined"
       const qb = knex(refTableAlias
-      ).select("total").withMaterialized(refTableAlias, knex(knex.raw(`?? as ??`, [
+      ).select("total").with(refTableAlias, knex(knex.raw(`?? as ??`, [
         parentBaseModel.getTnPath(parentModel?.table_name),
         prejoined,
       ]))

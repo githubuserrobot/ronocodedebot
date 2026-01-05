@@ -1,3 +1,8 @@
+
+import { customAlphabet } from 'nanoid';
+import { trace } from '~/tracing/decorator'
+
+
 import { Logger } from '@nestjs/common';
 import autoBind from 'auto-bind';
 import BigNumber from 'bignumber.js';
@@ -7,6 +12,7 @@ import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc.js';
 import equal from 'fast-deep-equal';
 import groupBy from 'lodash/groupBy';
+
 import {
   AuditOperationSubTypes,
   AuditOperationTypes,
@@ -231,15 +237,27 @@ function transformObject(value, idToAliasMap) {
   return result;
 }
 
+dayjs.extend(utc);
+
+dayjs.extend(timezone);
+
+const MAX_RECURSION_DEPTH = 2;
+
+const SELECT_REGEX = /^(\(|)select/i;
+const INSERT_REGEX = /^(\(|)insert/i;
+
 /**
  * Base class for models
  *
  * @class
  * @classdesc Base class for models
  */
-class BaseModelSqlv2 {
+class BaseModelSqlv2 implements IBaseModelSqlV2 {
   protected _dbDriver: XKnex;
-  protected viewId: string;
+  protected _viewId: string;
+  public get viewId() {
+    return this._viewId;
+  }
   protected _proto: any;
   protected _columns = {};
   protected source: Source;
@@ -423,7 +441,7 @@ class BaseModelSqlv2 {
       this.context,
       columns,
     );
-    const sorts = extractSortsObject(rest?.sort, aliasColObjMap);
+    const sorts = extractSortsObject(this.context, rest?.sort, aliasColObjMap);
     const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
 
     await conditionV2(
@@ -5343,7 +5361,7 @@ class BaseModelSqlv2 {
     }
   }
 
-  protected extractCompositePK({
+  extractCompositePK({
     ai,
     ag,
     rowId,
@@ -5779,7 +5797,7 @@ class BaseModelSqlv2 {
     return data;
   }
 
-  private async handleValidateBulkInsert(
+  async handleValidateBulkInsert(
     d: Record<string, any>,
     columns?: Column[],
     params = { allowSystemColumn: false },
@@ -8488,9 +8506,21 @@ class BaseModelSqlv2 {
     d: Record<string, any>,
   ) {
     if (!d) return d;
+
+    // Cache timezone and regex patterns at the method level for better performance
+    const cachedTimeZone = this.isSqlite
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : null;
+
+    // Pre-compile regex patterns to avoid repeated compilation
+    // the pre-compiled patterns have mutable `lastIndex` property that we use below, so it cannot be made global to avoid race condition
+    const isoRegex = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
+    const datetimeRegex =
+      /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?/g;
+    const noTimezoneRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
     for (const col of dateTimeColumns) {
       if (!d[col.id]) continue;
-
       if (col.uidt === UITypes.Formula) {
         if (!d[col.id] || typeof d[col.id] !== 'string') {
           continue;
@@ -8499,56 +8529,63 @@ class BaseModelSqlv2 {
         // remove milliseconds
         if (this.isMySQL) {
           d[col.id] = d[col.id].replace(/\.000000/g, '');
-        } else if (this.isMssql) {
-          d[col.id] = d[col.id].replace(/\.0000000 \+00:00/g, '');
         }
 
-        if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/g.test(d[col.id])) {
+        // Reset regex lastIndex for reuse
+        isoRegex.lastIndex = 0;
+        if (isoRegex.test(d[col.id])) {
           // convert ISO string (e.g. in MSSQL) to YYYY-MM-DD hh:mm:ssZ
           // e.g. 2023-05-18T05:30:00.000Z -> 2023-05-18 11:00:00+05:30
-          d[col.id] = d[col.id].replace(
-            /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/g,
-            (d: string) => {
-              if (!dayjs(d).isValid()) return d;
-              if (this.isSqlite) {
-                // e.g. DATEADD formula
-                return dayjs(d).utc().format('YYYY-MM-DD HH:mm:ssZ');
-              }
-              return dayjs(d).utc(true).format('YYYY-MM-DD HH:mm:ssZ');
-            },
-          );
+          isoRegex.lastIndex = 0; // Reset for replace
+          d[col.id] = d[col.id].replace(isoRegex, (dateStr: string) => {
+            if (!dayjs(dateStr).isValid()) return dateStr;
+            if (this.isSqlite) {
+              // e.g. DATEADD formula
+              return dayjs(dateStr).utc().format('YYYY-MM-DD HH:mm:ssZ');
+            }
+            return dayjs(dateStr).utc(true).format('YYYY-MM-DD HH:mm:ssZ');
+          });
           continue;
         }
 
         // convert all date time values to utc
         // the datetime is either YYYY-MM-DD hh:mm:ss (xcdb)
         // or YYYY-MM-DD hh:mm:ss+/-xx:yy (ext)
-        d[col.id] = d[col.id].replace(
-          /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?/g,
-          (d: string) => {
-            if (!dayjs(d).isValid()) {
-              return d;
-            }
+        datetimeRegex.lastIndex = 0; // Reset for replace
+        d[col.id] = d[col.id].replace(datetimeRegex, (dateStr: string) => {
+          if (!dayjs(dateStr).isValid()) {
+            return dateStr;
           }
 
-          const childRowsQb = this.dbDriver(childTn);
+          if (this.isSqlite) {
+            // if there is no timezone info,
+            // we assume the input is on NocoDB server timezone
+            // then we convert to UTC from server timezone
+            // example: datetime without timezone
+            // we need to display 2023-04-27 10:00:00 (in HKT)
+            // we convert d (e.g. 2023-04-27 18:00:00) to utc, i.e. 2023-04-27 02:00:00+00:00
+            // if there is timezone info,
+            // we simply convert it to UTC
+            // example: datetime with timezone
+            // e.g. 2023-04-27 10:00:00+05:30  -> 2023-04-27 04:30:00+00:00
+            return dayjs(dateStr)
+              .tz(cachedTimeZone)
+              .utc()
+              .format('YYYY-MM-DD HH:mm:ssZ');
+          }
 
-            // set keepLocalTime to true if timezone info is not found
-            const keepLocalTime = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/g.test(
-              d,
-            );
+          // set keepLocalTime to true if timezone info is not found
+          const keepLocalTime = noTimezoneRegex.test(dateStr);
 
-            return dayjs(d).utc(keepLocalTime).format('YYYY-MM-DD HH:mm:ssZ');
-          },
-        );
+          return dayjs(dateStr)
+            .utc(keepLocalTime)
+            .format('YYYY-MM-DD HH:mm:ssZ');
+        });
         continue;
       }
 
       if (col.uidt === UITypes.Date) {
-        const dateFormat = col.meta?.date_format;
-        if (dateFormat) {
-          d[col.title] = dayjs(d[col.title], dateFormat).format(dateFormat);
-        }
+        d[col.id] = dayjs(d[col.id]).format('YYYY-MM-DD');
         continue;
       }
 
@@ -8583,32 +8620,63 @@ class BaseModelSqlv2 {
         keepLocalTime = false;
       }
 
-          await this.updateLastModified({
-            model: parentTable,
-            rowIds: [childIds[0]],
-            cookie,
-          });
-        }
-        break;
+      if (d[col.id] instanceof Date) {
+        // e.g. MSSQL
+        // Wed May 10 2023 17:47:46 GMT+0800 (Hong Kong Standard Time)
+        keepLocalTime = false;
+      }
+      // e.g. 01.01.2022 10:00:00+05:30 -> 2022-01-01 04:30:00+00:00
+      // e.g. 2023-05-09 11:41:49 -> 2023-05-09 11:41:49+00:00
+      d[col.id] = dayjs(d[col.id])
+        // keep the local time
+        .utc(keepLocalTime)
+        // show the timezone even for Mysql
+        .format('YYYY-MM-DD HH:mm:ssZ');
     }
+    return d;
+  }
 
-    for (const childId of childIds) {
-      const _childId =
-        typeof childId === 'object'
-          ? Object.values(childId).join('_')
-          : childId;
+  public convertDateFormat(
+    data: Record<string, any>,
+    dependencyColumns?: Column[],
+  ) {
+    // Show the date time in UTC format in API response
+    // e.g. 2022-01-01 04:30:00+00:00
+    if (data) {
+      const columns = this.model?.columns.concat(dependencyColumns ?? []);
+      const dateTimeColumns = columns.filter(
+        (c) =>
+          c.uidt === UITypes.DateTime ||
+          c.uidt === UITypes.Date ||
+          isCreatedOrLastModifiedTimeCol(c) ||
+          c.uidt === UITypes.Formula,
+      );
+      if (dateTimeColumns.length) {
+        if (Array.isArray(data)) {
+          data = data.map((d) => this._convertDateFormat(dateTimeColumns, d));
+        } else {
+          data = this._convertDateFormat(dateTimeColumns, data);
+        }
+      }
+    }
+    return data;
+  }
 
-    // Transform childIds to ensure they are primitive values
-    const transformedChildIds = _childIds.map(childId =>
-      typeof childId === 'object' ? Object.values(childId).join('_') : childId
-    );
-
-    return addOrRemoveLinks(this).addLinks({
-      cookie,
-      childIds: transformedChildIds,
-      colId,
-      rowId,
+  async addLinks(params: {
+    cookie: any;
+    childIds: (string | number)[];
+    colId: string;
+    rowId: string;
+  }) {
+    await this.checkPermission({
+      entity: PermissionEntity.FIELD,
+      entityId: params.colId,
+      permission: PermissionKey.RECORD_FIELD_EDIT,
+      user: params.cookie?.user,
+      req: params.cookie,
     });
+
+    return addOrRemoveLinks(this).addLinks(params);
   }
 
   async removeLinks({

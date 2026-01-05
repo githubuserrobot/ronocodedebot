@@ -1,7 +1,9 @@
 import { NcDataErrorCodes, RelationTypes, UITypes } from 'nocodb-sdk';
-import type { BaseModelSqlv2 } from '~/db/BaseModelSqlv2';
-import type { IBaseModelSqlV2 } from '~/db/IBaseModelSqlV2';
+import type { IBaseModelSqlV2 } from './IBaseModelSqlV2';
+import type { Knex } from 'knex';
 import {
+  ButtonColumn,
+  FormulaColumn,
   LinksColumn,
   LinkToAnotherRecordColumn,
   RollupColumn,

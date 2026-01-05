@@ -1,8 +1,3 @@
-
-import { customAlphabet } from 'nanoid';
-import { trace } from '~/tracing/decorator'
-
-
 import { Logger } from '@nestjs/common';
 import autoBind from 'auto-bind';
 import BigNumber from 'bignumber.js';
@@ -12,18 +7,15 @@ import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc.js';
 import equal from 'fast-deep-equal';
 import groupBy from 'lodash/groupBy';
-
 import {
   AuditOperationSubTypes,
-  AuditOperationTypes,
   AuditV1OperationTypes,
-  BulkAuditV1OperationTypes,
-  ButtonActionsType,
-  DataBulkUpdateAllPayload,
-  DataLinkPayload,
-  DataUnlinkPayload,
+  convertDurationToSeconds,
+  enumColors,
+  EventType,
   extractFilterFromXwhere,
   isAIPromptCol,
+  isAttachment,
   isCreatedOrLastModifiedByCol,
   isCreatedOrLastModifiedTimeCol,
   isLinksOrLTAR,
@@ -31,13 +23,32 @@ import {
   isSystemColumn,
   isVirtualCol,
   LongTextAiMetaProp,
+  NcApiVersion,
+  NcErrorType,
+  ncIsNull,
   ncIsObject,
+  ncIsUndefined,
+  PermissionEntity,
+  PermissionKey,
   RelationTypes,
   UITypes,
 } from 'nocodb-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import type { Knex } from 'knex';
-import type { SortType } from 'nocodb-sdk';
+import type {
+  BulkAuditV1OperationTypes,
+  DataBulkDeletePayload,
+  DataBulkUpdateAllPayload,
+  DataBulkUpdatePayload,
+  DataDeletePayload,
+  DataInsertPayload,
+  DataLinkPayload,
+  DataUnlinkPayload,
+  DataUpdatePayload,
+  FilterType,
+  NcRequest,
+  UpdatePayload,
+} from 'nocodb-sdk';
 import type CustomKnex from '~/db/CustomKnex';
 import type { XKnex } from '~/db/CustomKnex';
 import type { IBaseModelSqlV2 } from '~/db/IBaseModelSqlV2';
@@ -47,16 +58,13 @@ import type {
 } from '~/db/sql-data-mapper/lib/BaseModel';
 import type { NcContext } from '~/interface/config';
 import type {
-  BarcodeColumn,
-  ButtonColumn,
   FormulaColumn,
   LinkToAnotherRecordColumn,
-  QrCodeColumn,
-  RollupColumn,
   SelectOption,
   User,
 } from '~/models';
 import type LookupColumn from '~/models/LookupColumn';
+import type { ResolverObj } from '~/utils';
 import { BaseModelDelete } from '~/db/BaseModelSqlv2/delete';
 import { ncIsStringHasValue } from '~/db/field-handler/utils/handlerUtils';
 import { AttachmentUrlUploadPreparator } from '~/db/BaseModelSqlv2/attachment-url-upload-preparator';
@@ -73,6 +81,28 @@ import formulaQueryBuilderv2 from '~/db/formulav2/formulaQueryBuilderv2';
 import { RelationManager } from '~/db/relation-manager';
 import sortV2 from '~/db/sortV2';
 import { customValidators } from '~/db/util/customValidators';
+import { NcError, OptionsNotExistsError } from '~/helpers/catchError';
+import {
+  _wherePk,
+  applyPaginate,
+  dataWrapper,
+  extractSortsObject,
+  formatDataForAudit,
+  getBaseModelSqlFromModelId,
+  getCompositePkValue,
+  getListArgs,
+  haveFormulaColumn,
+  isDataAuditEnabled as isDataAuditEnabledFn,
+  isPrimitiveType,
+  nanoidv2,
+  populatePk,
+  transformObjectKeys,
+  validateFuncOnColumn,
+} from '~/helpers/dbHelpers';
+import { defaultLimitConfig } from '~/helpers/extractLimitAndOffset';
+import { extractProps } from '~/helpers/extractProps';
+import getAst from '~/helpers/getAst';
+import { sanitize, unsanitize } from '~/helpers/sqlSanitize';
 import {
   Audit,
   BaseUser,
@@ -88,24 +118,22 @@ import {
 } from '~/models';
 import Noco from '~/Noco';
 import { HANDLE_WEBHOOK } from '~/services/hook-handler.service';
-import { extractColsMetaForAudit, generateAuditV1Payload, getAliasGenerator, nocoExecute, removeBlankPropsAndMask } from '~/utils';
-import genRollupSelectv2 from '~/db/genRollupSelectv2';
-import { NcError } from '~/helpers/catchError';
 import {
-  _wherePk,
-  applyPaginate,
-  extractSortsObject,
-  getCompositePkValue,
-  getListArgs,
-  haveFormulaColumn,
-  isDataAuditEnabled as isDataAuditEnabledFn,
-} from '~/helpers/dbHelpers';
-import { defaultLimitConfig } from '~/helpers/extractLimitAndOffset';
-import { extractProps } from '~/helpers/extractProps';
-import getAst from '~/helpers/getAst';
-import { sanitize, unsanitize } from '~/helpers/sqlSanitize';
-import generateLookupSelectQuery from '~/db/generateLookupSelectQuery';
+  batchUpdate,
+  extractColsMetaForAudit,
+  extractExcludedColumnNames,
+  generateAuditV1Payload,
+  nocoExecute,
+  populateUpdatePayloadDiff,
+  processConcurrently,
+  remapWithAlias,
+  removeBlankPropsAndMask,
+} from '~/utils';
+import { MetaTable } from '~/utils/globals';
 import { chunkArray } from '~/utils/tsUtils';
+import { QUERY_STRING_FIELD_ID_ON_RESULT } from '~/constants';
+import NocoSocket from '~/socket/NocoSocket';
+import { supportsThumbnails } from '~/utils/attachmentUtils';
 
 dayjs.extend(utc);
 
@@ -113,133 +141,9 @@ dayjs.extend(timezone);
 
 const logger = new Logger('BaseModelSqlv2');
 
-const GROUP_COL = '__nc_group_id';
-
-const nanoidv2 = customAlphabet('1234567890abcdefghijklmnopqrstuvwxyz', 14);
-
-const isPrimitiveType = (val) =>
-  typeof val === 'string' || typeof val === 'number';
-
 const JSON_COLUMN_TYPES = [UITypes.Button];
 
 const ORDER_STEP_INCREMENT = 1;
-
-export async function populatePk(
-  context: NcContext,
-  model: Model,
-  insertObj: any,
-) {
-  await model.getColumns(context);
-  for (const pkCol of model.primaryKeys) {
-    if (!pkCol.meta?.ag || insertObj[pkCol.title]) continue;
-    insertObj[pkCol.title] =
-      pkCol.meta?.ag === 'nc' ? `rc_${nanoidv2()}` : uuidv4();
-  }
-}
-
-function checkColumnRequired(
-  column: Column<any>,
-  fields: string[],
-  extractPkAndPv?: boolean,
-) {
-  // if primary key or foreign key included in fields, it's required
-  if (column.pk || column.uidt === UITypes.ForeignKey) return true;
-
-  if (extractPkAndPv && column.pv) return true;
-
-  // check fields defined and if not, then select all
-  // if defined check if it is in the fields
-  return !fields || fields.includes(column.title);
-}
-
-export async function getColumnName(
-  context: NcContext,
-  column: Column<any>,
-  columns?: Column[],
-) {
-  if (
-    !isCreatedOrLastModifiedTimeCol(column) &&
-    !isCreatedOrLastModifiedByCol(column) &&
-    !isOrderCol(column)
-  )
-    return column.column_name;
-  columns =
-    columns ||
-    (await Column.list(context, { fk_model_id: column.fk_model_id }));
-
-  switch (column.uidt) {
-    case UITypes.CreatedTime: {
-      const createdTimeSystemCol = columns.find(
-        (col) => col.system && col.uidt === UITypes.CreatedTime,
-      );
-      if (createdTimeSystemCol) return createdTimeSystemCol.column_name;
-      return column.column_name || 'created_at';
-    }
-    case UITypes.LastModifiedTime: {
-      const lastModifiedTimeSystemCol = columns.find(
-        (col) => col.system && col.uidt === UITypes.LastModifiedTime,
-      );
-      if (lastModifiedTimeSystemCol)
-        return lastModifiedTimeSystemCol.column_name;
-      return column.column_name || 'updated_at';
-    }
-    case UITypes.CreatedBy: {
-      const createdBySystemCol = columns.find(
-        (col) => col.system && col.uidt === UITypes.CreatedBy,
-      );
-      if (createdBySystemCol) return createdBySystemCol.column_name;
-      return column.column_name || 'created_by';
-    }
-    case UITypes.LastModifiedBy: {
-      const lastModifiedBySystemCol = columns.find(
-        (col) => col.system && col.uidt === UITypes.LastModifiedBy,
-      );
-      if (lastModifiedBySystemCol) return lastModifiedBySystemCol.column_name;
-      return column.column_name || 'updated_by';
-    }
-    case UITypes.Order: {
-      const orderSystemCol = columns.find(
-        (col) => col.system && col.uidt === UITypes.Order,
-      );
-      if (orderSystemCol) return orderSystemCol.column_name;
-      return column.column_name || 'nc_order';
-    }
-    default:
-      return column.column_name;
-  }
-}
-
-export function getAs(column: Column) {
-  return column.asId || column.id;
-}
-
-export function replaceDynamicFieldWithValue(
-  _row: any,
-  _rowId,
-  _tableColumns: Column[],
-  _readByPk: typeof BaseModelSqlv2.prototype.readByPk,
-  _queryParams?: Record<string, string>,
-) {
-  const replaceWithValue = async (conditions: Filter[]) => {
-    return conditions;
-  };
-  return replaceWithValue;
-}
-
-function transformObject(value, idToAliasMap) {
-  const result = {};
-  Object.entries(value).forEach(([k, v]) => {
-    const btAlias = idToAliasMap[k];
-    if (btAlias) {
-      result[btAlias] = v;
-    }
-  });
-  return result;
-}
-
-dayjs.extend(utc);
-
-dayjs.extend(timezone);
 
 const MAX_RECURSION_DEPTH = 2;
 
@@ -284,13 +188,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }) {
     this._dbDriver = dbDriver;
     this.model = model;
-    this.viewId = viewId;
+    this._viewId = viewId;
     this.context = context;
     this.schema = schema;
     autoBind(this);
   }
 
-  @trace()
   public async readByPk(
     id?: any,
     validateFormula = false,
@@ -300,17 +203,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       getHiddenColumn = false,
       throwErrorIfInvalidParams = false,
       extractOnlyPrimaries = false,
+      apiVersion,
       extractOrderColumn = false,
     }: {
       ignoreView?: boolean;
       getHiddenColumn?: boolean;
       throwErrorIfInvalidParams?: boolean;
       extractOnlyPrimaries?: boolean;
+      apiVersion?: NcApiVersion;
       extractOrderColumn?: boolean;
     } = {},
   ): Promise<any> {
     const qb = this.dbDriver(this.tnPath);
-
     const { ast, dependencyFields, parsedQuery } = await getAst(this.context, {
       query,
       model: this.model,
@@ -321,6 +225,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       throwErrorIfInvalidParams,
       extractOnlyPrimaries,
       extractOrderColumn,
+      apiVersion,
+      skipSubstitutingColumnIds:
+        this.context.api_version === NcApiVersion.V3 &&
+        query?.[QUERY_STRING_FIELD_ID_ON_RESULT] === 'true',
     });
 
     await this.selectObject({
@@ -330,12 +238,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
 
     qb.where(_wherePk(this.model.primaryKeys, id));
-
     let data;
 
     try {
       data = await this.execAndParse(qb, null, {
         first: true,
+        apiVersion,
+        skipSubstitutingColumnIds:
+          this.context.api_version === NcApiVersion.V3 &&
+          query?.[QUERY_STRING_FIELD_ID_ON_RESULT] === 'true',
       });
     } catch (e) {
       if (
@@ -344,7 +255,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       )
         throw e;
       logger.log(e);
-      return this.readByPk(id, true);
+      return this.readByPk(id, true, query, {
+        apiVersion,
+      });
     }
 
     if (data) {
@@ -352,21 +265,24 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       data.__proto__ = proto;
     }
 
-    return data ? await nocoExecute(ast, data, {}, parsedQuery) : null;
+    return data
+      ? await nocoExecute(ast, data as ResolverObj, {}, parsedQuery)
+      : null;
   }
 
-  @trace()
   public async readByPkFromModel(
     model = this.model,
     viewId?: string,
     extractDisplayValueData?: boolean,
     ...rest: Parameters<BaseModelSqlv2['readByPk']>
   ): Promise<any> {
+    let context = this.context;
     let data;
     if (this.model.id === model.id) {
       data = await this.readByPk(...rest);
     } else {
-      const baseModel = await Model.getBaseModelSQL(this.context, {
+      context = { ...this.context, base_id: this.model.base_id };
+      const baseModel = await Model.getBaseModelSQL(context, {
         model,
         viewId: viewId,
         dbDriver: this.dbDriver,
@@ -375,6 +291,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       data = await baseModel.readByPk(...rest);
     }
 
+    // load columns if not loaded already
+    await model.getCachedColumns(context);
+
     if (extractDisplayValueData) {
       return data ? data[model.displayValue.title] ?? null : '';
     }
@@ -382,7 +301,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
-  @trace()
   public async readOnlyPrimariesByPkFromModel(
     props: { model: Model; id: any; extractDisplayValueData?: boolean }[],
   ): Promise<any[]> {
@@ -405,7 +323,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
   public async exist(id?: any): Promise<any> {
     const qb = this.dbDriver(this.tnPath);
     await this.model.getColumns(this.context);
@@ -423,7 +340,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: add support for sortArrJson
-  @trace()
   public async findOne(
     args: {
       where?: string;
@@ -442,7 +358,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       columns,
     );
     const sorts = extractSortsObject(this.context, rest?.sort, aliasColObjMap);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
+    const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
+      where,
+      aliasColObjMap,
+    );
 
     await conditionV2(
       this,
@@ -461,9 +381,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       qb,
     );
 
+    const orderColumn = columns.find((c) => isOrderCol(c));
+
     if (Array.isArray(sorts) && sorts?.length) {
       await sortV2(this, sorts, qb);
+    } else if (orderColumn) {
+      qb.orderBy(orderColumn.column_name);
     } else if (this.model.primaryKey) {
+      // sort by primary key if not autogenerated string
+      // if autogenerated string sort by created_at column if present
       qb.orderBy(this.model.primaryKey.column_name);
     }
 
@@ -478,13 +404,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
 
     if (data) {
-      const proto = await this.getProto();
-      data.__proto__ = proto;
+      data.__proto__ = await this.getProto();
     }
     return data;
   }
 
-  @trace()
   public async list(
     args: {
       where?: string;
@@ -497,6 +421,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       limitOverride?: number;
       pks?: string;
       customConditions?: Filter[];
+      apiVersion?: NcApiVersion;
     } = {},
     options: {
       ignoreViewFilterAndSort?: boolean;
@@ -504,6 +429,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       validateFormula?: boolean;
       throwErrorIfInvalidParams?: boolean;
       limitOverride?: number;
+      skipSubstitutingColumnIds?: boolean;
+      skipSortBasedOnOrderCol?: boolean;
       ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
@@ -513,6 +440,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       validateFormula = false,
       throwErrorIfInvalidParams = false,
       limitOverride,
+      skipSortBasedOnOrderCol = false,
+      ignoreCache = false,
     } = options;
 
     const columns = await this.model.getColumns(this.context);
@@ -537,11 +466,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       columns,
     );
     let sorts = extractSortsObject(
+      this.context,
       rest?.sort,
       aliasColObjMap,
       throwErrorIfInvalidParams,
+      args?.apiVersion,
     );
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, 
+    const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
       throwErrorIfInvalidParams,
@@ -621,8 +553,20 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       await sortV2(this, sorts, qb, undefined, throwErrorIfInvalidParams);
     }
 
-    // sort by primary key if not autogenerated string
-    // if autogenerated string sort by created_at column if present
+    // skip sorting based on order column if specified in options
+    if (!skipSortBasedOnOrderCol) {
+      const orderColumn = columns.find((c) => isOrderCol(c));
+
+      // sort by order column if present
+      if (orderColumn) {
+        qb.orderBy(orderColumn.column_name);
+      }
+    }
+
+    // Ensure stable ordering:
+    // - Use auto-increment PK if available
+    // - Otherwise, fallback to system CreatedTime
+    // This avoids issues when order column has duplicates
     if (this.model.primaryKey && this.model.primaryKey.ai) {
       qb.orderBy(this.model.primaryKey.column_name);
     } else {
@@ -650,11 +594,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         applyPaginate(qb, { ...rest, limit: limitOverride });
       }
     }
-    const proto = await this.getProto({ignoreCache: options.ignoreCache ?? false});
+    const proto = await this.getProto();
 
     let data;
     try {
-      data = await this.execAndParse(qb, null, {ignoreCache: options.ignoreCache ?? false});
+      data = await this.execAndParse(qb, undefined, {
+        apiVersion: args.apiVersion ?? this.context.api_version,
+        skipSubstitutingColumnIds: options.skipSubstitutingColumnIds,
+      });
     } catch (e) {
       if (validateFormula || !haveFormulaColumn(columns)) throw e;
       logger.log(e);
@@ -671,7 +618,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
   }
 
-  @trace()
   public async count(
     args: {
       where?: string;
@@ -692,7 +638,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       this.context,
       columns,
     );
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, 
+    const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
       where,
       aliasColObjMap,
       throwErrorIfInvalidParams,
@@ -783,7 +730,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         direction: 'asc' | 'desc';
       };
       groupByColumnName?: string;
-      widgetFilterArr?: Filter[];
     },
   ) {
     const columns = await this.model.getColumns(this.context);
@@ -810,15 +756,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       columns,
     );
 
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
+    const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
+      where,
+      aliasColObjMap,
+    );
     await conditionV2(
       this,
       [
-        new Filter({
-          children: args.widgetFilterArr || [],
-          is_group: true,
-          logical_op: 'and',
-        }),
         new Filter({
           children: filterObj,
           is_group: true,
@@ -850,293 +795,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }[],
     _view: View,
   ) {
-    try {
-      const columns = await this.model.getColumns(this.context);
-      const aliasColObjMap = await this.model.getAliasColObjMap(
-        this.context,
-        columns,
-      );
-      const selectors = [] as Array<Knex.Raw>;
-
-      const viewFilterList = await Filter.rootFilterList(this.context, {
-        viewId: this.viewId,
-      });
-
-      if (!bulkFilterList?.length) {
-        return NcError.badRequest('bulkFilterList is required');
-      }
-
-      for (const f of bulkFilterList) {
-        const { where, ...rest } = this._getListArgs(f);
-        const groupBySelectors = [];
-        const groupByColumns: Record<string, Column> = {};
-
-        const getAlias = getAliasGenerator('__nc_gb');
-        const { filters: groupFilter } = extractFilterFromXwhere(this.context, f.where, aliasColObjMap);
-
-        const tQb = this.dbDriver(this.tnPath);
-        const colSelectors = [];
-
-        await Promise.all(
-          rest.column_name.split(',').map(async (col) => {
-            let column = columns.find(
-              (c) => c.column_name === col || c.title === col,
-            );
-
-            // if qrCode or Barcode replace it with value column nd keep the alias
-            if ([UITypes.QrCode, UITypes.Barcode].includes(column.uidt)) {
-              column = new Column({
-                ...(await column
-                  .getColOptions<BarcodeColumn | QrCodeColumn>(this.context)
-                  .then((col) => col.getValueColumn(this.context))),
-                asId: column.id,
-              });
-            }
-
-            groupByColumns[getAs(column)] = column;
-
-            switch (column.uidt) {
-              case UITypes.Attachment:
-                NcError.badRequest(
-                  'Group by using attachment column is not supported',
-                );
-                break;
-              case UITypes.Button: {
-                NcError.badRequest(
-                  'Group by using Button column is not supported',
-                );
-                break;
-              }
-              case UITypes.Links:
-              case UITypes.Rollup:
-                colSelectors.push(
-                  (
-                    await genRollupSelectv2({
-                      baseModelSqlv2: this,
-                      knex: this.dbDriver,
-                      columnOptions: (await column.getColOptions(
-                        this.context,
-                      )) as RollupColumn,
-                    })
-                  ).builder.as(getAs(column)),
-                );
-                groupBySelectors.push(getAs(column));
-                break;
-              case UITypes.Formula: {
-                let selectQb;
-                try {
-                  const _selectQb = await this.getSelectQueryBuilderForFormula(
-                    column,
-                  );
-                  selectQb = this.dbDriver.raw(`?? as ??`, [
-                    _selectQb.builder,
-                    getAs(column),
-                  ]);
-                } catch (e) {
-                  console.log(e);
-                  selectQb = this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]);
-                }
-                colSelectors.push(selectQb);
-                groupBySelectors.push(getAs(column));
-                break;
-              }
-
-              case UITypes.Lookup:
-              case UITypes.LinkToAnotherRecord: {
-                const _selectQb = await generateLookupSelectQuery({
-                  baseModelSqlv2: this,
-                  column,
-                  alias: null,
-                  model: this.model,
-                  getAlias,
-                });
-                const selectQb = this.dbDriver.raw(`?? as ??`, [
-                  this.dbDriver.raw(_selectQb.builder).wrap('(', ')'),
-                  getAs(column),
-                ]);
-                colSelectors.push(selectQb);
-                groupBySelectors.push(getAs(column));
-                break;
-              }
-              case UITypes.DateTime:
-              case UITypes.CreatedTime:
-              case UITypes.LastModifiedTime:
-                {
-                  const columnName = await getColumnName(
-                    this.context,
-                    column,
-                    columns,
-                  );
-                  // ignore seconds part in datetime and group
-                  if (this.dbDriver.clientType() === 'pg') {
-                    colSelectors.push(
-                      this.dbDriver.raw(
-                        "date_trunc('minute', ??) + interval '0 seconds' as ??",
-                        [columnName, getAs(column)],
-                      ),
-                    );
-                  } else if (
-                    this.dbDriver.clientType() === 'mysql' ||
-                    this.dbDriver.clientType() === 'mysql2'
-                  ) {
-                    colSelectors.push(
-                      // this.dbDriver.raw('??::date as ??', [columnName, getAs(column)]),
-                      this.dbDriver.raw(
-                        "DATE_SUB(CONVERT_TZ(??, @@GLOBAL.time_zone, '+00:00'), INTERVAL SECOND(??) SECOND) as ??",
-                        [columnName, columnName, getAs(column)],
-                      ),
-                    );
-                  } else if (this.dbDriver.clientType() === 'sqlite3') {
-                    colSelectors.push(
-                      this.dbDriver.raw(
-                        `strftime ('%Y-%m-%d %H:%M:00',:column:) ||
-  (
-   CASE WHEN substr(:column:, 20, 1) = '+' THEN
-    printf ('+%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   WHEN substr(:column:, 20, 1) = '-' THEN
-    printf ('-%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   ELSE
-    '+00:00'
-   END) AS :id:`,
-                        {
-                          column: columnName,
-                          id: getAs(column),
-                        },
-                      ),
-                    );
-                  } else {
-                    colSelectors.push(
-                      this.dbDriver.raw('DATE(??) as ??', [
-                        columnName,
-                        getAs(column),
-                      ]),
-                    );
-                  }
-                  groupBySelectors.push(getAs(column));
-                }
-                break;
-              default: {
-                const columnName = await getColumnName(
-                  this.context,
-                  column,
-                  columns,
-                );
-                colSelectors.push(
-                  this.dbDriver.raw('?? as ??', [columnName, getAs(column)]),
-                );
-                groupBySelectors.push(getAs(column));
-                break;
-              }
-            }
-          }),
-        );
-
-        // get aggregated count of each group
-        tQb.count(`${this.model.primaryKey?.column_name || '*'} as count`);
-        tQb.select(...colSelectors);
-
-        if (+rest?.shuffle) {
-          await this.shuffle({ qb: tQb });
-        }
-
-        await conditionV2(
-          this,
-          [
-            ...(this.viewId
-              ? [
-                  new Filter({
-                    children: viewFilterList || [],
-                    is_group: true,
-                  }),
-                ]
-              : []),
-            new Filter({
-              children: rest.filterArr || [],
-              is_group: true,
-              logical_op: 'and',
-            }),
-            new Filter({
-              children: extractFilterFromXwhere(this.context, where, aliasColObjMap).filters || [],
-              is_group: true,
-              logical_op: 'and',
-            }),
-            new Filter({
-              children: groupFilter,
-              is_group: true,
-              logical_op: 'and',
-            }),
-            new Filter({
-              children: args.filterArr || [],
-              is_group: true,
-              logical_op: 'and',
-            }),
-          ],
-          tQb,
-        );
-
-        tQb.groupBy(...groupBySelectors);
-
-        const count = this.dbDriver
-          .count('*', { as: 'count' })
-          .from(tQb.as('groupby'));
-
-        let subQuery;
-        switch (this.dbDriver.client.config.client) {
-          case 'pg':
-            subQuery = this.dbDriver
-              .select(
-                this.dbDriver.raw(`json_build_object('count', "count") as ??`, [
-                  getAlias(),
-                ]),
-              )
-              .from(count.as(getAlias()));
-            selectors.push(
-              this.dbDriver.raw(`(??) as ??`, [subQuery, `${f.alias}`]),
-            );
-            break;
-          case 'mysql2':
-            subQuery = this.dbDriver
-              .select(this.dbDriver.raw(`JSON_OBJECT('count', \`count\`)`))
-              .from(count.as(getAlias()));
-            selectors.push(
-              this.dbDriver.raw(`(??) as ??`, [subQuery, `${f.alias}`]),
-            );
-            break;
-          case 'sqlite3':
-            subQuery = this.dbDriver
-              .select(
-                this.dbDriver.raw(`json_object('count', "count") as ??`, [
-                  f.alias,
-                ]),
-              )
-              .from(count.as(getAlias()));
-            selectors.push(
-              this.dbDriver.raw(`(??) as ??`, [subQuery, `${f.alias}`]),
-            );
-            break;
-          default:
-            NcError.notImplemented(
-              'This database does not support bulk groupBy count',
-            );
-        }
-      }
-
-      const qb = this.dbDriver(this.tnPath);
-      qb.select(...selectors).limit(1);
-
-      const data = await this.execAndParse(qb, null, {
-        raw: true,
-        first: true,
-      });
-
-      return data;
-    } catch (e) {
-      console.log(e);
-    }
+    return await baseModelGroupBy(this, logger).bulkCount(
+      args,
+      bulkFilterList,
+      _view,
+    );
   }
 
   async bulkGroupBy(
@@ -1155,376 +818,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }[],
     _view: View,
   ) {
-    const columns = await this.model.getColumns(this.context);
-    const aliasColObjMap = await this.model.getAliasColObjMap(
-      this.context,
-      columns,
+    return await baseModelGroupBy(this, logger).bulkList(
+      args,
+      bulkFilterList,
+      _view,
     );
-    const selectors = [] as Array<Knex.Raw>;
-
-    const viewFilterList = await Filter.rootFilterList(this.context, {
-      viewId: this.viewId,
-    });
-
-    try {
-      if (!bulkFilterList?.length) {
-        return NcError.badRequest('bulkFilterList is required');
-      }
-
-      for (const f of bulkFilterList) {
-        const { where, ...rest } = this._getListArgs(f);
-        const groupBySelectors = [];
-        const groupByColumns: Record<string, Column> = {};
-
-        const getAlias = getAliasGenerator('__nc_gb');
-        const { filters: groupFilter } = extractFilterFromXwhere(this.context, f?.where, aliasColObjMap);
-        let groupSort = extractSortsObject(this.context, rest?.sort, aliasColObjMap, false, undefined);
-
-        const tQb = this.dbDriver(this.tnPath);
-        const colSelectors = [];
-        const colIds = rest.column_name
-          .split(',')
-          .map((col) => {
-            const column = columns.find(
-              (c) => c.column_name === col || c.title === col,
-            );
-            if (!column) {
-              throw NcError.fieldNotFound(col);
-            }
-            return column?.id;
-          })
-          .join('_');
-
-        await Promise.all(
-          rest.column_name.split(',').map(async (col) => {
-            let column = columns.find(
-              (c) => c.column_name === col || c.title === col,
-            );
-
-            // if qrCode or Barcode replace it with value column nd keep the alias
-            if ([UITypes.QrCode, UITypes.Barcode].includes(column.uidt)) {
-              column = new Column({
-                ...(await column
-                  .getColOptions<BarcodeColumn | QrCodeColumn>(this.context)
-                  .then((col) => col.getValueColumn(this.context))),
-                asId: column.id,
-              });
-            }
-
-            groupByColumns[getAs(column)] = column;
-
-            switch (column.uidt) {
-              case UITypes.Attachment:
-                NcError.badRequest(
-                  'Group by using attachment column is not supported',
-                );
-                break;
-              case UITypes.Button: {
-                NcError.badRequest(
-                  'Group by using Button column is not supported',
-                );
-                break;
-              }
-              case UITypes.Links:
-              case UITypes.Rollup:
-                colSelectors.push(
-                  (
-                    await genRollupSelectv2({
-                      baseModelSqlv2: this,
-                      knex: this.dbDriver,
-                      columnOptions: (await column.getColOptions(
-                        this.context,
-                      )) as RollupColumn,
-                    })
-                  ).builder.as(getAs(column)),
-                );
-                groupBySelectors.push(getAs(column));
-                break;
-              case UITypes.Formula: {
-                let selectQb;
-                try {
-                  const _selectQb = await this.getSelectQueryBuilderForFormula(
-                    column,
-                  );
-                  selectQb = this.dbDriver.raw(`?? as ??`, [
-                    _selectQb.builder,
-                    getAs(column),
-                  ]);
-                } catch (e) {
-                  console.log(e);
-                  selectQb = this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]);
-                }
-                colSelectors.push(selectQb);
-                groupBySelectors.push(getAs(column));
-                break;
-              }
-
-              case UITypes.Lookup:
-              case UITypes.LinkToAnotherRecord: {
-                const _selectQb = await generateLookupSelectQuery({
-                  baseModelSqlv2: this,
-                  column,
-                  alias: null,
-                  model: this.model,
-                  getAlias,
-                });
-                const selectQb = this.dbDriver.raw(`?? as ??`, [
-                  this.dbDriver.raw(_selectQb.builder).wrap('(', ')'),
-                  getAs(column),
-                ]);
-                colSelectors.push(selectQb);
-                groupBySelectors.push(getAs(column));
-                break;
-              }
-              case UITypes.DateTime:
-              case UITypes.CreatedTime:
-              case UITypes.LastModifiedTime:
-                {
-                  const columnName = await getColumnName(
-                    this.context,
-                    column,
-                    columns,
-                  );
-                  // ignore seconds part in datetime and group
-                  if (this.dbDriver.clientType() === 'pg') {
-                    colSelectors.push(
-                      this.dbDriver.raw(
-                        "date_trunc('minute', ??) + interval '0 seconds' as ??",
-                        [columnName, getAs(column)],
-                      ),
-                    );
-                  } else if (
-                    this.dbDriver.clientType() === 'mysql' ||
-                    this.dbDriver.clientType() === 'mysql2'
-                  ) {
-                    colSelectors.push(
-                      // this.dbDriver.raw('??::date as ??', [columnName, getAs(column)]),
-                      this.dbDriver.raw(
-                        "DATE_SUB(CONVERT_TZ(??, @@GLOBAL.time_zone, '+00:00'), INTERVAL SECOND(??) SECOND) as ??",
-                        [columnName, columnName, getAs(column)],
-                      ),
-                    );
-                  } else if (this.dbDriver.clientType() === 'sqlite3') {
-                    colSelectors.push(
-                      this.dbDriver.raw(
-                        `strftime ('%Y-%m-%d %H:%M:00',:column:) ||
-  (
-   CASE WHEN substr(:column:, 20, 1) = '+' THEN
-    printf ('+%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   WHEN substr(:column:, 20, 1) = '-' THEN
-    printf ('-%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   ELSE
-    '+00:00'
-   END) AS :id:`,
-                        {
-                          column: columnName,
-                          id: getAs(column),
-                        },
-                      ),
-                    );
-                  } else {
-                    colSelectors.push(
-                      this.dbDriver.raw('DATE(??) as ??', [
-                        columnName,
-                        getAs(column),
-                      ]),
-                    );
-                  }
-                  groupBySelectors.push(getAs(column));
-                }
-                break;
-              default: {
-                const columnName = await getColumnName(
-                  this.context,
-                  column,
-                  columns,
-                );
-                colSelectors.push(
-                  this.dbDriver.raw('?? as ??', [columnName, getAs(column)]),
-                );
-                groupBySelectors.push(getAs(column));
-                break;
-              }
-            }
-          }),
-        );
-
-        // get aggregated count of each group
-        tQb.count(`${this.model.primaryKey?.column_name || '*'} as count`);
-        tQb.select(...colSelectors);
-
-        if (+rest?.shuffle) {
-          await this.shuffle({ qb: tQb });
-        }
-
-        await conditionV2(
-          this,
-          [
-            ...(this.viewId
-              ? [
-                  new Filter({
-                    children: viewFilterList || [],
-                    is_group: true,
-                  }),
-                ]
-              : []),
-            new Filter({
-              children: rest.filterArr || [],
-              is_group: true,
-              logical_op: 'and',
-            }),
-            new Filter({
-              children: extractFilterFromXwhere(this.context, where, aliasColObjMap).filters || [],
-              is_group: true,
-              logical_op: 'and',
-            }),
-            new Filter({
-              children: groupFilter,
-              is_group: true,
-              logical_op: 'and',
-            }),
-            new Filter({
-              children: args.filterArr || [],
-              is_group: true,
-              logical_op: 'and',
-            }),
-          ],
-          tQb,
-        );
-
-        if (!groupSort) {
-          if (rest.sortArr?.length) {
-            groupSort = rest.sortArr;
-          } else if (this.viewId) {
-            groupSort = await Sort.list(this.context, { viewId: this.viewId });
-          }
-        }
-
-        for (const sort of groupSort || []) {
-          if (!groupByColumns[sort.fk_column_id]) {
-            continue;
-          }
-
-          const column = groupByColumns[sort.fk_column_id];
-
-          if (
-            [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(
-              column.uidt as UITypes,
-            )
-          ) {
-            const columnName = await getColumnName(
-              this.context,
-              column,
-              columns,
-            );
-            const baseUsers = await BaseUser.getUsersList(this.context, {
-              base_id: column.base_id,
-            });
-
-            // create nested replace statement for each user
-            const finalStatement = baseUsers.reduce((acc, user) => {
-              const qb = this.dbDriver.raw(`REPLACE(${acc}, ?, ?)`, [
-                user.id,
-                user.display_name || user.email,
-              ]);
-              return qb.toQuery();
-            }, this.dbDriver.raw(`??`, [columnName]).toQuery());
-
-            if (!['asc', 'desc'].includes(sort.direction)) {
-              tQb.orderBy(
-                'count',
-                sort.direction === 'count-desc' ? 'desc' : 'asc',
-                sort.direction === 'count-desc' ? 'LAST' : 'FIRST',
-              );
-            } else {
-              tQb.orderBy(
-                sanitize(this.dbDriver.raw(finalStatement)),
-                sort.direction,
-                sort.direction === 'desc' ? 'LAST' : 'FIRST',
-              );
-            }
-          } else {
-            if (!['asc', 'desc'].includes(sort.direction)) {
-              tQb.orderBy(
-                'count',
-                sort.direction === 'count-desc' ? 'desc' : 'asc',
-                sort.direction === 'count-desc' ? 'LAST' : 'FIRST',
-              );
-            } else {
-              tQb.orderBy(
-                getAs(column),
-                sort.direction,
-                sort.direction === 'desc' ? 'LAST' : 'FIRST',
-              );
-            }
-          }
-          tQb.groupBy(...groupBySelectors);
-          applyPaginate(tQb, rest);
-        }
-
-        let subQuery;
-        switch (this.dbDriver.client.config.client) {
-          case 'pg':
-            subQuery = this.dbDriver
-              .select(
-                this.dbDriver.raw(
-                  `json_agg(json_build_object('count', "count", '${rest.column_name}', "${colIds}")) as ??`,
-                  [getAlias()],
-                ),
-              )
-              .from(tQb.as(getAlias()));
-            selectors.push(
-              this.dbDriver.raw(`(??) as ??`, [subQuery, `${f.alias}`]),
-            );
-            break;
-          case 'mysql2':
-            subQuery = this.dbDriver
-              .select(
-                this.dbDriver.raw(
-                  `JSON_ARRAYAGG(JSON_OBJECT('count', \`count\`, '${rest.column_name}', \`${colIds}\`))`,
-                ),
-              )
-              .from(this.dbDriver.raw(`(??) as ??`, [tQb, getAlias()]));
-            selectors.push(
-              this.dbDriver.raw(`(??) as ??`, [subQuery, f.alias]),
-            );
-            break;
-          case 'sqlite3':
-            subQuery = this.dbDriver
-              .select(
-                this.dbDriver.raw(
-                  `json_group_array(json_object('count', "count", '${rest.column_name}', "${colIds}")) as ??`,
-                  [f.alias],
-                ),
-              )
-              .from(tQb.as(getAlias()));
-            selectors.push(
-              this.dbDriver.raw(`(??) as ??`, [subQuery, f.alias]),
-            );
-            break;
-          default:
-            NcError.notImplemented(
-              'This database does not support bulk groupBy',
-            );
-        }
-      }
-
-      const qb = this.dbDriver(this.tnPath);
-      qb.select(...selectors).limit(1);
-
-      const data = await this.execAndParse(qb, null, {
-        raw: true,
-        first: true,
-      });
-      return data;
-    } catch (err) {
-      logger.log(err);
-      return [];
-    }
   }
 
   async bulkAggregate(
@@ -1536,7 +834,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       where?: string;
       filterArrJson?: string | Filter[];
     }>,
-    view: View,
+    view?: View,
   ) {
     try {
       if (!bulkFilterList?.length) {
@@ -1547,27 +845,47 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
       const columns = await this.model.getColumns(this.context);
 
-      let viewColumns = (
-        await GridViewColumn.list(this.context, this.viewId)
-      ).filter((c) => {
-        const col = this.model.columnsById[c.fk_column_id];
-        return c.show && (view.show_system_fields || !isSystemColumn(col));
-      });
+      let viewColumns: any[];
+      if (this.viewId) {
+        viewColumns = (
+          await GridViewColumn.list(this.context, this.viewId)
+        ).filter((c) => {
+          const col = this.model.columnsById[c.fk_column_id];
+          return c.show && (view?.show_system_fields || !isSystemColumn(col));
+        });
 
-      // By default, the aggregation is done based on the columns configured in the view
-      // If the aggregation parameter is provided, only the columns mentioned in the aggregation parameter are considered
-      // Also the aggregation type from the parameter is given preference over the aggregation type configured in the view
-      if (aggregation?.length) {
-        viewColumns = viewColumns
-          .map((c) => {
-            const agg = aggregation.find((a) => a.field === c.fk_column_id);
-            return new GridViewColumn({
-              ...c,
-              show: !!agg,
-              aggregation: agg ? agg.type : c.aggregation,
-            });
-          })
-          .filter((c) => c.show);
+        // By default, the aggregation is done based on the columns configured in the view
+        // If the aggregation parameter is provided, only the columns mentioned in the aggregation parameter are considered
+        // Also the aggregation type from the parameter is given preference over the aggregation type configured in the view
+        if (aggregation?.length) {
+          viewColumns = viewColumns
+            .map((c) => {
+              const agg = aggregation.find((a) => a.field === c.fk_column_id);
+              return new GridViewColumn({
+                ...c,
+                show: !!agg,
+                aggregation: agg ? agg.type : c.aggregation,
+              });
+            })
+            .filter((c) => c.show);
+        }
+      } else {
+        // If no viewId, use all model columns or those specified in aggregation
+        if (aggregation?.length) {
+          viewColumns = aggregation
+            .map((agg) => {
+              const col = this.model.columnsById[agg.field];
+              if (!col) return null;
+              return {
+                fk_column_id: col.id,
+                aggregation: agg.type,
+                show: true,
+              };
+            })
+            .filter(Boolean);
+        } else {
+          viewColumns = [];
+        }
       }
 
       const aliasColObjMap = await this.model.getAliasColObjMap(
@@ -1605,15 +923,22 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         return {};
       }
 
-      const viewFilterList = await Filter.rootFilterList(this.context, {
-        viewId: this.viewId,
-      });
+      let viewFilterList = [];
+      if (this.viewId) {
+        viewFilterList = await Filter.rootFilterList(this.context, {
+          viewId: this.viewId,
+        });
+      }
 
       const selectors = [] as Array<Knex.Raw>;
       // Generate a knex raw query for each filter in the bulkFilterList
       for (const f of bulkFilterList) {
         const tQb = this.dbDriver(this.tnPath);
-        const { filters: aggFilter } = extractFilterFromXwhere(this.context, f.where, aliasColObjMap);
+        const { filters: aggFilter } = extractFilterFromXwhere(
+          this.context,
+          f.where,
+          aliasColObjMap,
+        );
         let aggFilterJson = f.filterArrJson;
         try {
           aggFilterJson = JSON.parse(aggFilterJson as any);
@@ -1636,7 +961,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               logical_op: 'and',
             }),
             new Filter({
-              children: extractFilterFromXwhere(this.context, where, aliasColObjMap).filters || [],
+              children: extractFilterFromXwhere(
+                this.context,
+                where,
+                aliasColObjMap,
+              ).filters,
               is_group: true,
               logical_op: 'and',
             }),
@@ -1710,45 +1039,59 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
       qb.limit(1);
 
-      const data = await this.execAndParse(qb, null, {
+      return await this.execAndParse(qb, null, {
         first: true,
         bulkAggregate: true,
       });
-
-      return data;
     } catch (err) {
       logger.log(err);
       return [];
     }
   }
 
-  async aggregate(args: { filterArr?: Filter[]; where?: string }, view: View) {
+  async aggregate(args: { filterArr?: Filter[]; where?: string }, view?: View) {
     try {
       const { where, aggregation } = this._getListArgs(args as any);
 
       const columns = await this.model.getColumns(this.context);
 
-      let viewColumns = (
-        await GridViewColumn.list(this.context, this.viewId)
-      ).filter((c) => {
-        const col = this.model.columnsById[c.fk_column_id];
-        return c.show && (view.show_system_fields || !isSystemColumn(col));
-      });
+      let viewColumns: any[];
+      if (this.viewId) {
+        viewColumns = (
+          await GridViewColumn.list(this.context, this.viewId)
+        ).filter((c) => {
+          const col = this.model.columnsById[c.fk_column_id];
+          return c.show && (view?.show_system_fields || !isSystemColumn(col));
+        });
 
-      // By default, the aggregation is done based on the columns configured in the view
-      // If the aggregation parameter is provided, only the columns mentioned in the aggregation parameter are considered
-      // Also the aggregation type from the parameter is given preference over the aggregation type configured in the view
-      if (aggregation?.length) {
-        viewColumns = viewColumns
-          .map((c) => {
-            const agg = aggregation.find((a) => a.field === c.fk_column_id);
-            return new GridViewColumn({
-              ...c,
-              show: !!agg,
-              aggregation: agg ? agg.type : c.aggregation,
-            });
-          })
-          .filter((c) => c.show);
+        if (aggregation?.length) {
+          viewColumns = viewColumns
+            .map((c) => {
+              const agg = aggregation.find((a) => a.field === c.fk_column_id);
+              return new GridViewColumn({
+                ...c,
+                show: !!agg,
+                aggregation: agg ? agg.type : c.aggregation,
+              });
+            })
+            .filter((c) => c.show);
+        }
+      } else {
+        if (aggregation?.length) {
+          viewColumns = aggregation
+            .map((agg) => {
+              const col = this.model.columnsById[agg.field];
+              if (!col) return null;
+              return {
+                fk_column_id: col.id,
+                aggregation: agg.type,
+                show: true,
+              };
+            })
+            .filter(Boolean);
+        } else {
+          viewColumns = [];
+        }
       }
 
       const aliasColObjMap = await this.model.getAliasColObjMap(
@@ -1759,7 +1102,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const qb = this.dbDriver(this.tnPath);
 
       // Apply filers from view configuration, filterArr and where parameter
-      const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
+      const { filters: filterObj } = extractFilterFromXwhere(
+        this.context,
+        where,
+        aliasColObjMap,
+      );
       await conditionV2(
         this,
         [
@@ -1838,312 +1185,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   async groupBy(args: {
     where?: string;
     column_name: string;
+    subGroupColumnName?: string;
     limit?;
     offset?;
     sort?: string | string[];
     filterArr?: Filter[];
     sortArr?: Sort[];
   }) {
-    const { where, ...rest } = this._getListArgs(args as any);
-
-    args.column_name = args.column_name || '';
-
-    const columns = await this.model.getColumns(this.context);
-    const groupByColumns: Record<string, Column> = {};
-
-    const selectors = [];
-    const groupBySelectors = [];
-    const getAlias = getAliasGenerator('__nc_gb');
-
-    await Promise.all(
-      args.column_name.split(',').map(async (col) => {
-        let column = columns.find(
-          (c) => c.column_name === col || c.title === col,
-        );
-        if (!column) {
-          throw NcError.fieldNotFound(col);
-        }
-
-        // if qrCode or Barcode replace it with value column nd keep the alias
-        if ([UITypes.QrCode, UITypes.Barcode].includes(column.uidt))
-          column = new Column({
-            ...(await column
-              .getColOptions<BarcodeColumn | QrCodeColumn>(this.context)
-              .then((col) => col.getValueColumn(this.context))),
-            asId: column.id,
-          });
-
-        groupByColumns[getAs(column)] = column;
-
-        switch (column.uidt) {
-          case UITypes.Attachment:
-            NcError.badRequest(
-              'Group by using attachment column is not supported',
-            );
-            break;
-          case UITypes.Button:
-            {
-              NcError.badRequest(
-                'Group by using Button column is not supported',
-              );
-            }
-            break;
-          case UITypes.Links:
-          case UITypes.Rollup:
-            selectors.push(
-              (
-                await genRollupSelectv2({
-                  baseModelSqlv2: this,
-                  knex: this.dbDriver,
-                  columnOptions: (await column.getColOptions(
-                    this.context,
-                  )) as RollupColumn,
-                })
-              ).builder.as(getAs(column)),
-            );
-            groupBySelectors.push(getAs(column));
-            break;
-          case UITypes.Formula:
-            {
-              let selectQb;
-              try {
-                const _selectQb = await this.getSelectQueryBuilderForFormula(
-                  column,
-                );
-
-                selectQb = this.dbDriver.raw(`?? as ??`, [
-                  _selectQb.builder,
-                  getAs(column),
-                ]);
-              } catch (e) {
-                logger.log(e);
-                // return dummy select
-                selectQb = this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]);
-              }
-
-              selectors.push(selectQb);
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-          case UITypes.Lookup:
-          case UITypes.LinkToAnotherRecord:
-            {
-              const _selectQb = await generateLookupSelectQuery({
-                baseModelSqlv2: this,
-                column,
-                alias: null,
-                model: this.model,
-                getAlias,
-              });
-
-              const selectQb = this.dbDriver.raw(`?? as ??`, [
-                this.dbDriver.raw(_selectQb.builder).wrap('(', ')'),
-                getAs(column),
-              ]);
-
-              selectors.push(selectQb);
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-          case UITypes.CreatedTime:
-          case UITypes.LastModifiedTime:
-          case UITypes.DateTime:
-            {
-              const columnName = await getColumnName(
-                this.context,
-                column,
-                columns,
-              );
-              // ignore seconds part in datetime and group
-              if (this.dbDriver.clientType() === 'pg') {
-                selectors.push(
-                  this.dbDriver.raw(
-                    "date_trunc('minute', ??) + interval '0 seconds' as ??",
-                    [columnName, getAs(column)],
-                  ),
-                );
-              } else if (
-                this.dbDriver.clientType() === 'mysql' ||
-                this.dbDriver.clientType() === 'mysql2'
-              ) {
-                selectors.push(
-                  // this.dbDriver.raw('??::date as ??', [columnName, getAs(column)]),
-                  this.dbDriver.raw(
-                    "DATE_SUB(CONVERT_TZ(??, @@GLOBAL.time_zone, '+00:00'), INTERVAL SECOND(??) SECOND) as ??",
-                    [columnName, columnName, getAs(column)],
-                  ),
-                );
-              } else if (this.dbDriver.clientType() === 'sqlite3') {
-                selectors.push(
-                  this.dbDriver.raw(
-                    `strftime ('%Y-%m-%d %H:%M:00',:column:) ||
-  (
-   CASE WHEN substr(:column:, 20, 1) = '+' THEN
-    printf ('+%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   WHEN substr(:column:, 20, 1) = '-' THEN
-    printf ('-%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   ELSE
-    '+00:00'
-   END) AS :id:`,
-                    {
-                      column: columnName,
-                      id: getAs(column),
-                    },
-                  ),
-                );
-              } else {
-                selectors.push(
-                  this.dbDriver.raw('DATE(??) as ??', [
-                    columnName,
-                    getAs(column),
-                  ]),
-                );
-              }
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-          default:
-            {
-              const columnName = await getColumnName(
-                this.context,
-                column,
-                columns,
-              );
-              selectors.push(
-                this.dbDriver.raw('?? as ??', [columnName, getAs(column)]),
-              );
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-        }
-      }),
-    );
-
-    const qb = this.dbDriver(this.tnPath);
-
-    // get aggregated count of each group
-    qb.count(`${this.model.primaryKey?.column_name || '*'} as count`);
-
-    // get each group
-    qb.select(...selectors);
-
-    if (+rest?.shuffle) {
-      await this.shuffle({ qb });
-    }
-
-    const aliasColObjMap = await this.model.getAliasColObjMap(
-      this.context,
-      columns,
-    );
-
-    let sorts = extractSortsObject(this.context, rest?.sort, aliasColObjMap, false, undefined);
-
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-    await conditionV2(
-      this,
-      [
-        ...(this.viewId
-          ? [
-              new Filter({
-                children:
-                  (await Filter.rootFilterList(this.context, {
-                    viewId: this.viewId,
-                  })) || [],
-                is_group: true,
-              }),
-            ]
-          : []),
-        new Filter({
-          children: args.filterArr || [],
-          is_group: true,
-          logical_op: 'and',
-        }),
-        new Filter({
-          children: filterObj,
-          is_group: true,
-          logical_op: 'and',
-        }),
-      ],
-      qb,
-    );
-
-    if (!sorts) {
-      if (args.sortArr?.length) {
-        sorts = args.sortArr;
-      } else if (this.viewId) {
-        sorts = await Sort.list(this.context, { viewId: this.viewId });
-      }
-    }
-
-    // if sort is provided filter out the group by columns sort and apply
-    // since we are grouping by the column and applying sort on any other column is not required
-    for (const sort of sorts || []) {
-      if (!groupByColumns[sort.fk_column_id]) {
-        continue;
-      }
-
-      const column = groupByColumns[sort.fk_column_id];
-
-      if (
-        [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(
-          column.uidt as UITypes,
-        )
-      ) {
-        const columnName = await getColumnName(this.context, column, columns);
-
-        const baseUsers = await BaseUser.getUsersList(this.context, {
-          base_id: column.base_id,
-        });
-
-        // create nested replace statement for each user
-        const finalStatement = baseUsers.reduce((acc, user) => {
-          const qb = this.dbDriver.raw(`REPLACE(${acc}, ?, ?)`, [
-            user.id,
-            user.display_name || user.email,
-          ]);
-          return qb.toQuery();
-        }, this.dbDriver.raw(`??`, [columnName]).toQuery());
-
-        if (!['asc', 'desc'].includes(sort.direction)) {
-          qb.orderBy(
-            'count',
-            sort.direction === 'count-desc' ? 'desc' : 'asc',
-            sort.direction === 'count-desc' ? 'LAST' : 'FIRST',
-          );
-        } else {
-          qb.orderBy(
-            sanitize(this.dbDriver.raw(finalStatement)),
-            sort.direction,
-            sort.direction === 'desc' ? 'LAST' : 'FIRST',
-          );
-        }
-      } else {
-        if (!['asc', 'desc'].includes(sort.direction)) {
-          qb.orderBy(
-            'count',
-            sort.direction === 'count-desc' ? 'desc' : 'asc',
-            sort.direction === 'count-desc' ? 'LAST' : 'FIRST',
-          );
-        } else {
-          qb.orderBy(
-            getAs(column),
-            sort.direction,
-            sort.direction === 'desc' ? 'LAST' : 'FIRST',
-          );
-        }
-      }
-    }
-
-    // group by using the column aliases
-    qb.groupBy(...groupBySelectors);
-
-    applyPaginate(qb, rest);
-
-    return await this.execAndParse(qb);
+    return await baseModelGroupBy(this, logger).list(args);
   }
 
   async groupByCount(args: {
@@ -2153,1778 +1202,290 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     offset?;
     filterArr?: Filter[];
   }) {
-    const { where } = this._getListArgs(args as any);
-
-    args.column_name = args.column_name || '';
-
-    const selectors = [];
-    const groupBySelectors = [];
-    const getAlias = getAliasGenerator('__nc_gb');
-
-    const columns = await this.model.getColumns(this.context);
-
-    // todo: refactor and avoid duplicate code
-    await Promise.all(
-      args.column_name.split(',').map(async (col) => {
-        let column = columns.find(
-          (c) => c.column_name === col || c.title === col,
-        );
-        if (!column) {
-          throw NcError.fieldNotFound(col);
-        }
-
-        // if qrCode or Barcode replace it with value column nd keep the alias
-        if ([UITypes.QrCode, UITypes.Barcode].includes(column.uidt))
-          column = new Column({
-            ...(await column
-              .getColOptions<BarcodeColumn | QrCodeColumn>(this.context)
-              .then((col) => col.getValueColumn(this.context))),
-            asId: column.id,
-          });
-
-        switch (column.uidt) {
-          case UITypes.Attachment:
-            NcError.badRequest(
-              'Group by using attachment column is not supported',
-            );
-            break;
-          case UITypes.Button: {
-            NcError.badRequest('Group by using Button column is not supported');
-            break;
-          }
-          case UITypes.Rollup:
-          case UITypes.Links:
-            selectors.push(
-              (
-                await genRollupSelectv2({
-                  baseModelSqlv2: this,
-                  // tn: this.title,
-                  knex: this.dbDriver,
-                  // column,
-                  // alias,
-                  columnOptions: (await column.getColOptions(
-                    this.context,
-                  )) as RollupColumn,
-                })
-              ).builder.as(getAs(column)),
-            );
-            groupBySelectors.push(getAs(column));
-            break;
-          case UITypes.Formula: {
-            let selectQb;
-            try {
-              const _selectQb = await this.getSelectQueryBuilderForFormula(
-                column,
-              );
-
-              selectQb = this.dbDriver.raw(`?? as ??`, [
-                _selectQb.builder,
-                getAs(column),
-              ]);
-            } catch (e) {
-              logger.log(e);
-              // return dummy select
-              selectQb = this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]);
-            }
-
-            selectors.push(selectQb);
-            groupBySelectors.push(getAs(column));
-            break;
-          }
-          case UITypes.Lookup:
-          case UITypes.LinkToAnotherRecord:
-            {
-              const _selectQb = await generateLookupSelectQuery({
-                baseModelSqlv2: this,
-                column,
-                alias: null,
-                model: this.model,
-                getAlias,
-              });
-
-              const selectQb = this.dbDriver.raw(`?? as ??`, [
-                this.dbDriver.raw(_selectQb.builder).wrap('(', ')'),
-                getAs(column),
-              ]);
-
-              selectors.push(selectQb);
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-          case UITypes.CreatedTime:
-          case UITypes.LastModifiedTime:
-          case UITypes.DateTime:
-            {
-              const columnName = await getColumnName(
-                this.context,
-                column,
-                columns,
-              );
-              // ignore seconds part in datetime and group
-              if (this.dbDriver.clientType() === 'pg') {
-                selectors.push(
-                  this.dbDriver.raw(
-                    "date_trunc('minute', ??) + interval '0 seconds' as ??",
-                    [columnName, getAs(column)],
-                  ),
-                );
-              } else if (
-                this.dbDriver.clientType() === 'mysql' ||
-                this.dbDriver.clientType() === 'mysql2'
-              ) {
-                selectors.push(
-                  this.dbDriver.raw(
-                    "CONVERT_TZ(DATE_SUB(??, INTERVAL SECOND(??) SECOND), @@GLOBAL.time_zone, '+00:00') as ??",
-                    [columnName, columnName, getAs(column)],
-                  ),
-                );
-              } else if (this.dbDriver.clientType() === 'sqlite3') {
-                selectors.push(
-                  this.dbDriver.raw(
-                    `strftime ('%Y-%m-%d %H:%M:00',:column:) ||
-  (
-   CASE WHEN substr(:column:, 20, 1) = '+' THEN
-    printf ('+%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   WHEN substr(:column:, 20, 1) = '-' THEN
-    printf ('-%s:',
-     substr(:column:, 21, 2)) || printf ('%s',
-     substr(:column:, 24, 2))
-   ELSE
-    '+00:00'
-   END) as :id:`,
-                    {
-                      column: columnName,
-                      id: getAs(column),
-                    },
-                  ),
-                );
-              } else {
-                selectors.push(
-                  this.dbDriver.raw('DATE(??) as ??', [
-                    columnName,
-                    getAs(column),
-                  ]),
-                );
-              }
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-          default:
-            {
-              const columnName = await getColumnName(
-                this.context,
-                column,
-                columns,
-              );
-              selectors.push(
-                this.dbDriver.raw('?? as ??', [columnName, getAs(column)]),
-              );
-              groupBySelectors.push(getAs(column));
-            }
-            break;
-        }
-      }),
-    );
-
-    const qb = this.dbDriver(this.tnPath);
-    qb.count(`${this.model.primaryKey?.column_name || '*'} as count`);
-    qb.select(...selectors);
-
-    const aliasColObjMap = await this.model.getAliasColObjMap(
-      this.context,
-      columns,
-    );
-
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-    await conditionV2(
-      this,
-      [
-        ...(this.viewId
-          ? [
-              new Filter({
-                children:
-                  (await Filter.rootFilterList(this.context, {
-                    viewId: this.viewId,
-                  })) || [],
-                is_group: true,
-              }),
-            ]
-          : []),
-        new Filter({
-          children: args.filterArr || [],
-          is_group: true,
-          logical_op: 'and',
-        }),
-        new Filter({
-          children: filterObj,
-          is_group: true,
-          logical_op: 'and',
-        }),
-      ],
-      qb,
-    );
-
-    qb.groupBy(...groupBySelectors);
-
-    const qbP = this.dbDriver
-      .count('*', { as: 'count' })
-      .from(qb.as('groupby'));
-
-    return (await this.execAndParse(qbP, null, { raw: true, first: true }))
-      ?.count;
+    return await baseModelGroupBy(this, logger).count(args);
   }
 
+  // #region relation list count part 1
   async multipleHmList(
-    { colId, ids: _ids }: { colId: string; ids: any[] },
-    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
+    param: {
+      colId: string;
+      ids: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
-    try {
-      // skip duplicate id
-      const ids = [...new Set(_ids)];
-
-      const { where, sort, ...rest } = this._getListArgs(args as any);
-      // todo: get only required fields
-      const relColumn = (await this.model.getColumns(this.context)).find(
-        (c) => c.id === colId,
-      );
-
-      const chilCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getChildColumn(this.context);
-      const childTable = await chilCol.getModel(this.context);
-      const parentCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getParentColumn(this.context);
-      const parentTable = await parentCol.getModel(this.context);
-      const childModel = await Model.getBaseModelSQL(this.context, {
-        model: childTable,
-        dbDriver: this.dbDriver,
-      });
-      await parentTable.getColumns(this.context);
-
-      const childTn = this.getTnPath(childTable);
-      const parentTn = this.getTnPath(parentTable);
-
-      const qb = this.dbDriver(childTn);
-      await childModel.selectObject({
-        qb,
-        extractPkAndPv: true,
-        fieldsSet: args.fieldsSet,
-      });
-      await this.applySortAndFilter({ table: childTable, where, qb, sort });
-      const childQb = this.dbDriver.queryBuilder().from(
-        this.dbDriver
-          .unionAll(
-            ids.map((p) => {
-              const query = qb
-                .clone()
-                .select(this.dbDriver.raw('? as ??', [p, GROUP_COL]))
-                .whereIn(
-                  chilCol.column_name,
-                  this.dbDriver(parentTn)
-                    .select(parentCol.column_name)
-                    // .where(parentTable.primaryKey.cn, p)
-                    .where(_wherePk(parentTable.primaryKeys, p)),
-                );
-              // todo: sanitize
-              query.limit(+rest?.limit || 25);
-              query.offset(+rest?.offset || 0);
-
-              return this.isSqlite ? this.dbDriver.select().from(query) : query;
-            }),
-            !this.isSqlite,
-          )
-          .as('list'),
-      );
-
-      const children = await this.execAndParse(
-        childQb,
-        await childTable.getColumns(this.context), 
-        {ignoreCache: args.ignoreCache ?? false}
-      );
-      const proto = await (
-        await Model.getBaseModelSQL(this.context, {
-          id: childTable.id,
-          dbDriver: this.dbDriver,
-        })
-      ).getProto();
-
-      return groupBy(
-        children.map((c) => {
-          c.__proto__ = proto;
-          return c;
-        }),
-        GROUP_COL,
-      );
-    } catch (e) {
-      logger.error(e);
-    }
+    return relationDataFetcher({ baseModel: this, logger }).multipleHmList(
+      param,
+      args,
+    );
   }
 
-  @trace()
   public async mmList(
-    { colId, parentId, apiVersion }: { colId: any; parentId: any; apiVersion?: any },
+    param: {
+      colId: string;
+      parentId: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
     selectAllRecords = false,
   ) {
-    const { where, sort, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
+    return relationDataFetcher({ baseModel: this, logger }).mmList(
+      param,
+      args,
+      selectAllRecords,
     );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    // const tn = this.model.tn;
-    // const cn = (await relColOptions.getChildColumn()).title;
-    const mmTable = await relColOptions.getMMModel(this.context);
-    const vtn = this.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-    const childModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-
-    const childTn = this.getTnPath(childTable);
-    const parentTn = this.getTnPath(parentTable);
-
-    const rtn = childTn;
-    const rtnId = childTable.id;
-
-    const qb = this.dbDriver(rtn)
-      .join(vtn, `${vtn}.${vrcn}`, `${rtn}.${rcn}`)
-      .whereIn(
-        `${vtn}.${vcn}`,
-        this.dbDriver(parentTn)
-          .select(cn)
-          // .where(parentTable.primaryKey.cn, id)
-          .where(_wherePk(parentTable.primaryKeys, parentId)),
-      );
-
-    await childModel.selectObject({
-      qb,
-      fieldsSet: args.fieldsSet,
-    });
-
-    await this.applySortAndFilter({
-      table: childTable,
-      where,
-      qb,
-      sort,
-    });
-
-    // todo: sanitize
-    if (!selectAllRecords) {
-      qb.limit(+rest?.limit || 25);
-    }
-    qb.offset(selectAllRecords ? 0 : +rest?.offset || 0);
-
-    const children = await this.execAndParse(
-      qb,
-      await childTable.getColumns(this.context),
-    );
-    const proto = await (
-      await Model.getBaseModelSQL(this.context, {
-        id: rtnId,
-        dbDriver: this.dbDriver,
-      })
-    ).getProto();
-
-    return children.map((c) => {
-      c.__proto__ = proto;
-      return c;
-    });
   }
 
   async multipleHmListCount({ colId, ids }) {
-    try {
-      // const { cn } = this.hasManyRelations.find(({ tn }) => tn === child) || {};
-      const relColumn = (await this.model.getColumns(this.context)).find(
-        (c) => c.id === colId,
-      );
-      const chilCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getChildColumn(this.context);
-      const childTable = await chilCol.getModel(this.context);
-      const parentCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getParentColumn(this.context);
-      const parentTable = await parentCol.getModel(this.context);
-      await parentTable.getColumns(this.context);
-
-      const childTn = this.getTnPath(childTable);
-      const parentTn = this.getTnPath(parentTable);
-
-      const children = await this.execAndParse(
-        this.dbDriver.unionAll(
-          ids.map((p) => {
-            const query = this.dbDriver(childTn)
-              .count(`${chilCol?.column_name} as count`)
-              .whereIn(
-                chilCol.column_name,
-                this.dbDriver(parentTn)
-                  .select(parentCol.column_name)
-                  // .where(parentTable.primaryKey.cn, p)
-                  .where(_wherePk(parentTable.primaryKeys, p)),
-              )
-              .first();
-
-            return this.isSqlite ? this.dbDriver.select().from(query) : query;
-          }),
-          !this.isSqlite,
-        ),
-        null,
-        { raw: true },
-      );
-
-      return children.map(({ count }) => count);
-    } catch (e) {
-      throw e;
-    }
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleHmListCount({
+      colId,
+      ids,
+    });
   }
 
   async hmList(
-    { colId, id, apiVersion }: { colId: any; id: any; apiVersion?: any },
+    param: {
+      colId: string;
+      id: any;
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    },
     args: { limit?; offset?; fieldSet?: Set<string> } = {},
   ) {
-    try {
-      const { where, sort, ...rest } = this._getListArgs(args as any);
-      // todo: get only required fields
-
-      const relColumn = (await this.model.getColumns(this.context)).find(
-        (c) => c.id === colId,
-      );
-
-      const chilCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getChildColumn(this.context);
-      const childTable = await chilCol.getModel(this.context);
-      const parentCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getParentColumn(this.context);
-      const parentTable = await parentCol.getModel(this.context);
-      const childBaseModel = await Model.getBaseModelSQL(this.context, {
-        model: childTable,
-        dbDriver: this.dbDriver,
-      });
-      await parentTable.getColumns(this.context);
-
-      const childTn = childBaseModel.getTnPath(childTable);
-      const parentTn = this.getTnPath(parentTable);
-
-      const qb = this.dbDriver(childTn);
-      await this.applySortAndFilter({ table: childTable, where, qb, sort });
-
-      qb.whereIn(
-        chilCol.column_name,
-        this.dbDriver(parentTn)
-          .select(parentCol.column_name)
-          // .where(parentTable.primaryKey.cn, p)
-          .where(_wherePk(parentTable.primaryKeys, id)),
-      );
-      // todo: sanitize
-      qb.limit(+rest?.limit || 25);
-      qb.offset(+rest?.offset || 0);
-
-      await childBaseModel.selectObject({
-        qb,
-        fieldsSet: args.fieldSet,
-      });
-
-      await this.applySortAndFilter({
-        table: childTable,
-        where,
-        qb,
-        sort,
-      });
-
-      const children = await this.execAndParse(
-        qb,
-        await childTable.getColumns(this.context),
-      );
-
-      const proto = await (
-        await Model.getBaseModelSQL(this.context, {
-          id: childTable.id,
-          dbDriver: this.dbDriver,
-        })
-      ).getProto();
-
-      return children.map((c) => {
-        c.__proto__ = proto;
-        return c;
-      });
-    } catch (e) {
-      throw e;
-    }
+    return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
   }
 
   async hmListCount({ colId, id }, args) {
-    try {
-      // const { cn } = this.hasManyRelations.find(({ tn }) => tn === child) || {};
-      const { where } = this._getListArgs(args as any);
-      const relColumn = (await this.model.getColumns(this.context)).find(
-        (c) => c.id === colId,
-      );
-      const chilCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getChildColumn(this.context);
-      const childTable = await chilCol.getModel(this.context);
-      const parentCol = await (
-        (await relColumn.getColOptions(
-          this.context,
-        )) as LinkToAnotherRecordColumn
-      ).getParentColumn(this.context);
-      const parentTable = await parentCol.getModel(this.context);
-      await parentTable.getColumns(this.context);
-
-      const childBaseModel = await Model.getBaseModelSQL(this.context, {
-        dbDriver: this.dbDriver,
-        model: childTable,
-      });
-      const childTn = childBaseModel.getTnPath(childTable);
-      const parentTn = this.getTnPath(parentTable);
-
-      const query = this.dbDriver(childTn)
-        .count(`${chilCol?.column_name} as count`)
-        .whereIn(
-          chilCol.column_name,
-          this.dbDriver(parentTn)
-            .select(parentCol.column_name)
-            .where(_wherePk(parentTable.primaryKeys, id)),
-        );
-      const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-      const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-      await conditionV2(
-        this,
-        [
-          new Filter({
-            children: filterObj,
-            is_group: true,
-            logical_op: 'and',
-          }),
-        ],
-        query,
-      );
-
-      return (await this.execAndParse(query, null, { raw: true, first: true }))
-        ?.count;
-    } catch (e) {
-      throw e;
-    }
+    return relationDataFetcher({ baseModel: this, logger }).hmListCount(
+      { colId, id },
+      args,
+    );
   }
 
-  @trace()
-  public async multipleMmListFast(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
-      colId: string;
-      parentIds: any[];
-    },
-    args: { limit?; offset?; fieldsSet?: Set<string>; ignoreCache?: boolean} = {},
-  ) {
-    // skip duplicate id
-    const parentIds = [...new Set(_parentIds)];
-    
-    // Phase 3 Optimization: Chunk large parentIds arrays for better performance
-    // Reduced to 50 to minimize WHERE IN parameter count and improve query plan
-    const CHUNK_SIZE = 50;
-    if (parentIds.length > CHUNK_SIZE) {
-      const chunks: any[][] = [];
-      for (let i = 0; i < parentIds.length; i += CHUNK_SIZE) {
-        chunks.push(parentIds.slice(i, i + CHUNK_SIZE));
-      }
-      
-      const results = await Promise.all(
-        chunks.map(chunk => 
-          this.multipleMmListFast({ colId, parentIds: chunk }, args)
-        )
-      );
-      
-      // Merge results maintaining original order
-      const resultMap = new Map();
-      for (const chunkResult of results) {
-        chunkResult.forEach((items, idx) => {
-          if (items && items.length > 0) {
-            // Find the original ID for this result
-            const originalIdx = _parentIds.indexOf(items[0]?.[GROUP_COL]);
-            if (originalIdx !== -1) {
-              resultMap.set(_parentIds[originalIdx], items);
-            }
-          }
-        });
-      }
-      
-      return _parentIds.map((id) => resultMap.get(id) || []);
-    }
-    
-    const { where, sort, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    // Phase 1 Optimization: Parallelize metadata lookups
-    const [mmTable, mmChildCol, mmParentCol, childCol, parentCol] = await Promise.all([
-      relColOptions.getMMModel(this.context),
-      relColOptions.getMMChildColumn(this.context),
-      relColOptions.getMMParentColumn(this.context),
-      relColOptions.getChildColumn(this.context),
-      relColOptions.getParentColumn(this.context),
-    ]);
-
-    // if mm table is not present then return
-    if (!mmTable) {
-      return;
-    }
-
-    const vtn = this.getTnPath(mmTable);
-    const vcn = mmChildCol.column_name;
-    const vrcn = mmParentCol.column_name;
-    const cn = childCol.column_name;
-
-    // Fetch child and parent tables in parallel
-    const [childTable, parentTable] = await Promise.all([
-      parentCol.getModel(this.context),
-      childCol.getModel(this.context),
-    ]);
-
-    // Fetch columns for both tables in parallel
-    const [parentTableCols, childTableCols] = await Promise.all([
-      parentTable.getColumns(this.context),
-      childTable.getColumns(this.context),
-    ]);
-
-    const columnName = childTable.displayValue.column_name
-    const qb = this.dbDriver()
-
-    const childModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-    // Minimize selected columns by default: only PK(s) and display value
-    // If caller provided fieldsSet, honor it
-    let fieldsSetToUse = args.fieldsSet;
-    if (!fieldsSetToUse) {
-      const pkTitles = (childTable.primaryKeys?.length
-        ? childTable.primaryKeys
-        : childTableCols.filter((c) => (c as any).pk)
-      ).map((c) => c.title);
-      const displayCol =
-        childTableCols.find((c) => c.column_name === columnName) ||
-        (childTable.displayValue as any);
-      const titles = [...pkTitles];
-      if (displayCol?.title) titles.push(displayCol.title);
-      fieldsSetToUse = new Set<string>(titles);
-    }
-    await childModel.selectObject({ qb, fieldsSet: fieldsSetToUse });
-
-    await this.applySortAndFilter({
-      table: childTable,
-      where,
-      qb,
-      sort,
-    });
-
-    // Phase 2 Optimization: Replace CTE with direct JOIN
-    // Build the base query with direct join instead of CTE
-    const finalQb = qb
-      .select(
-        `${vtn}.${vrcn}`,
-        `${vtn}.${vcn} as ${GROUP_COL}`
-      )
-      .from(mmTable.table_name)
-      .join(childTable.table_name, `${childTable.table_name}.${cn}`, `${vtn}.${vrcn}`)
-      .whereIn(`${vtn}.${vcn}`, parentIds);
-
-    // Phase 2B: Optimize DISTINCT ON for Postgres
-    // Use DISTINCT ON with explicit ORDER BY for deterministic results
-    if (this.isPg && columnName) {
-      // Add ORDER BY before DISTINCT ON to ensure consistent results and enable index usage
-      finalQb.orderBy([
-        { column: `${vtn}.${vcn}`, order: 'asc' },
-        { column: `${childTable.table_name}.${columnName}`, order: 'asc' }
-      ]);
-      finalQb.distinctOn(`${vtn}.${vcn}`, `${childTable.table_name}.${columnName}`);
-    } else if (columnName) {
-      // For non-Postgres databases, use GROUP BY approach
-      // This is less efficient but more portable
-      finalQb.groupBy(`${vtn}.${vcn}`, `${vtn}.${vrcn}`, `${childTable.table_name}.${columnName}`);
-    }
-    
-
-    const rtnId = childTable.id;
-
-    // Reuse already fetched childTableCols instead of fetching again
-    const children = await this.execAndParse(
-      finalQb,
-      childTableCols,
-      {ignoreCache: args.ignoreCache ?? false},
-    );
-
-    const proto = await (
-      await Model.getBaseModelSQL(this.context, {
-        id: rtnId,
-        dbDriver: this.dbDriver,
-      })
-    ).getProto();
-    
-    const gs = groupBy(
-      children.map((c) => {
-        c.__proto__ = proto;
-        return c;
-      }),
-      GROUP_COL,
-    );
-    return _parentIds.map((id) => gs[id] || []);
-  }
-
-  @trace()
   public async multipleMmList(
-    {
-      colId,
-      parentIds: _parentIds,
-    }: {
+    param: {
       colId: string;
       parentIds: any[];
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
     },
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
-    // skip duplicate id
-    const parentIds = [...new Set(_parentIds)];
-    const { where, sort, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
+    return relationDataFetcher({ baseModel: this, logger }).multipleMmList(
+      param,
+      args,
     );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    // const tn = this.model.tn;
-    // const cn = (await relColOptions.getChildColumn(this.context)).title;
-    const mmTable = await relColOptions.getMMModel(this.context);
-
-    // if mm table is not present then return
-    if (!mmTable) {
-      return;
-    }
-
-    const vtn = this.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-    const childModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-
-    const childTn = this.getTnPath(childTable);
-    const parentTn = this.getTnPath(parentTable);
-
-    const rtn = childTn;
-    const rtnId = childTable.id;
-
-    const qb = this.dbDriver(rtn).join(vtn, `${vtn}.${vrcn}`, `${rtn}.${rcn}`);
-
-    await childModel.selectObject({ qb, fieldsSet: args.fieldsSet });
-
-    await this.applySortAndFilter({
-      table: childTable,
-      where,
-      qb,
-      sort,
-    });
-
-    const finalQb = this.dbDriver.unionAll(
-      parentIds.map((id) => {
-        const query = qb
-          .clone()
-          .whereIn(
-            `${vtn}.${vcn}`,
-            this.dbDriver(parentTn)
-              .select(cn)
-              // .where(parentTable.primaryKey.cn, id)
-              .where(_wherePk(parentTable.primaryKeys, id)),
-          )
-          .select(this.dbDriver.raw('? as ??', [id, GROUP_COL]));
-
-        // todo: sanitize
-        query.limit(+rest?.limit || 25);
-        query.offset(+rest?.offset || 0);
-
-        return this.isSqlite ? this.dbDriver.select().from(query) : query;
-      }),
-      !this.isSqlite,
-    );
-
-    const children = await this.execAndParse(
-      finalQb,
-      await childTable.getColumns(this.context),
-    );
-
-    const proto = await (
-      await Model.getBaseModelSQL(this.context, {
-        id: rtnId,
-        dbDriver: this.dbDriver,
-      })
-    ).getProto();
-    const gs = groupBy(
-      children.map((c) => {
-        c.__proto__ = proto;
-        return c;
-      }),
-      GROUP_COL,
-    );
-    return _parentIds.map((id) => gs[id] || []);
   }
 
+  public async multipleMmListCount({ colId, parentIds }) {
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).multipleMmListCount({
+      colId,
+      parentIds,
+    });
+  }
+
+  public async mmListCount({ colId, parentId }, args) {
+    return relationDataFetcher({ baseModel: this, logger }).mmListCount(
+      { colId, parentId },
+      args,
+    );
+  }
+
+  // #endregion relation list count part 1
+
+  // #region relation list count part 2
   // todo: naming & optimizing
-  @trace()
   public async getMmChildrenExcludedListCount(
     { colId, pid = null },
     args,
   ): Promise<any> {
-    const { where } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const mmTable = await relColOptions.getMMModel(this.context);
-    const assocBaseModel = await Model.getBaseModelSQL(this.context, {
-      id: mmTable.id,
-      dbDriver: this.dbDriver,
-    });
-
-    const vtn = assocBaseModel.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-
-    const childView = await relColOptions.getChildView(this.context);
-    let listArgs: any = {};
-    if (childView) {
-      const { dependencyFields } = await getAst(this.context, {
-        model: childTable,
-        query: {},
-        view: childView,
-        throwErrorIfInvalidParams: false,
-      });
-
-      listArgs = dependencyFields;
-      try {
-        listArgs.filterArr = JSON.parse(listArgs.filterArrJson);
-      } catch (e) {}
-      try {
-        listArgs.sortArr = JSON.parse(listArgs.sortArrJson);
-      } catch (e) {}
-    }
-
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-
-    const parentBaseModel = await Model.getBaseModelSQL(this.context, {
-      id: parentTable.id,
-      dbDriver: this.dbDriver,
-    });
-    const childBaseModel = await Model.getBaseModelSQL(this.context, {
-      id: childTable.id,
-      dbDriver: this.dbDriver,
-    });
-    const childTn = childBaseModel.getTnPath(childTable);
-    const parentTn = parentBaseModel.getTnPath(parentTable);
-
-    const rtn = childTn;
-    const qb = this.dbDriver(rtn)
-      .count(`*`, { as: 'count' })
-      .where((qb) => {
-        qb.whereNotIn(
-          rcn,
-          this.dbDriver(rtn)
-            .select(`${rtn}.${rcn}`)
-            .join(vtn, `${rtn}.${rcn}`, `${vtn}.${vrcn}`)
-            .whereIn(
-              `${vtn}.${vcn}`,
-              this.dbDriver(parentTn)
-                .select(cn)
-                // .where(parentTable.primaryKey.cn, pid)
-                .where(_wherePk(parentTable.primaryKeys, pid)),
-            ),
-        ).orWhereNull(rcn);
-      });
-
-    const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: childView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: pid,
-    });
-
-    return (
-      await this.execAndParse(qb, await childTable.getColumns(this.context), {
-        raw: true,
-        first: true,
-      })
-    )?.count;
-  }
-
-  @trace()
-  public async multipleMmListCount({ colId, parentIds }) {
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const mmTable = await relColOptions.getMMModel(this.context);
-    const vtn = this.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-
-    const childTn = this.getTnPath(childTable);
-    const parentTn = this.getTnPath(parentTable);
-
-    const rtn = childTn;
-
-    const qb = this.dbDriver(rtn)
-      .join(vtn, `${vtn}.${vrcn}`, `${rtn}.${rcn}`)
-      // .select({
-      //   [`${tn}_${vcn}`]: `${vtn}.${vcn}`
-      // })
-      .count(`${vtn}.${vcn}`, { as: 'count' });
-
-    // await childModel.selectObject({ qb });
-    const children = await this.execAndParse(
-      this.dbDriver.unionAll(
-        parentIds.map((id) => {
-          const query = qb
-            .clone()
-            .whereIn(
-              `${vtn}.${vcn}`,
-              this.dbDriver(parentTn)
-                .select(cn)
-                // .where(parentTable.primaryKey.cn, id)
-                .where(_wherePk(parentTable.primaryKeys, id)),
-            )
-            .select(this.dbDriver.raw('? as ??', [id, GROUP_COL]));
-          // this._paginateAndSort(query, { sort, limit, offset }, null, true);
-          return this.isSqlite ? this.dbDriver.select().from(query) : query;
-        }),
-        !this.isSqlite,
-      ),
-      null,
-      { raw: true },
-    );
-
-    const gs = groupBy(children, GROUP_COL);
-    return parentIds.map((id) => gs?.[id]?.[0] || []);
-  }
-
-  @trace()
-  public async mmListCount({ colId, parentId }, args) {
-    const { where } = this._getListArgs(args as any);
-
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const mmTable = await relColOptions.getMMModel(this.context);
-
-    const assocBaseModel = await Model.getBaseModelSQL(this.context, {
-      model: mmTable,
-      dbDriver: this.dbDriver,
-    });
-
-    const vtn = assocBaseModel.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-
-    const childBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-
-    const childTn = childBaseModel.getTnPath(childTable);
-    const parentTn = this.getTnPath(parentTable);
-
-    const rtn = childTn;
-
-    const qb = this.dbDriver(rtn)
-      .join(vtn, `${vtn}.${vrcn}`, `${rtn}.${rcn}`)
-      // .select({
-      //   [`${tn}_${vcn}`]: `${vtn}.${vcn}`
-      // })
-      .count(`${vtn}.${vcn}`, { as: 'count' })
-      .whereIn(
-        `${vtn}.${vcn}`,
-        this.dbDriver(parentTn)
-          .select(cn)
-          // .where(parentTable.primaryKey.cn, id)
-          .where(_wherePk(parentTable.primaryKeys, parentId)),
-      );
-    const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    await conditionV2(
-      this,
-      [
-        new Filter({
-          children: filterObj,
-          is_group: true,
-          logical_op: 'and',
-        }),
-      ],
-      qb,
-    );
-    return (await this.execAndParse(qb, null, { raw: true, first: true }))
-      ?.count;
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getMmChildrenExcludedListCount({ colId, pid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getMmChildrenExcludedList(
     { colId, pid = null },
     args,
   ): Promise<any> {
-    const { where, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const mmTable = await relColOptions.getMMModel(this.context);
-    const assocBaseModel = await Model.getBaseModelSQL(this.context, {
-      id: mmTable.id,
-      dbDriver: this.dbDriver,
-    });
-
-    const vtn = assocBaseModel.getTnPath(mmTable);
-    const vcn = (await relColOptions.getMMChildColumn(this.context))
-      .column_name;
-    const vrcn = (await relColOptions.getMMParentColumn(this.context))
-      .column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-
-    const childTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    await parentTable.getColumns(this.context);
-    const parentBaseModel = await Model.getBaseModelSQL(this.context, {
-      id: parentTable.id,
-      dbDriver: this.dbDriver,
-    });
-    const childBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      id: childTable.id,
-    });
-    const childTn = childBaseModel.getTnPath(childTable);
-    const parentTn = parentBaseModel.getTnPath(parentTable);
-
-    const childView = await relColOptions.getChildView(this.context);
-    let listArgs: any = {};
-    if (childView) {
-      const { dependencyFields } = await getAst(this.context, {
-        model: childTable,
-        query: {},
-        view: childView,
-        throwErrorIfInvalidParams: false,
-      });
-      listArgs = dependencyFields;
-    }
-
-    const rtn = childTn;
-
-    const qb = this.dbDriver(rtn).where((qb) =>
-      qb
-        .whereNotIn(
-          rcn,
-          this.dbDriver(rtn)
-            .select(`${rtn}.${rcn}`)
-            .join(vtn, `${rtn}.${rcn}`, `${vtn}.${vrcn}`)
-            .whereIn(
-              `${vtn}.${vcn}`,
-              this.dbDriver(parentTn)
-                .select(cn)
-                // .where(parentTable.primaryKey.cn, pid)
-                .where(_wherePk(parentTable.primaryKeys, pid)),
-            ),
-        )
-        .orWhereNull(rcn),
-    );
-
-    if (+rest?.shuffle) {
-      await this.shuffle({ qb });
-    }
-
-    await childBaseModel.selectObject({
-      qb,
-      fieldsSet: listArgs?.fieldsSet,
-      viewId: childView?.id,
-    });
-
-    const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: childView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: pid,
-    });
-
-    // sort by primary key if not autogenerated string
-    // if autogenerated string sort by created_at column if present
-    if (childTable.primaryKey && childTable.primaryKey.ai) {
-      qb.orderBy(childTable.primaryKey.column_name);
-    } else if (childTable.columns.find((c) => c.column_name === 'created_at')) {
-      qb.orderBy('created_at');
-    }
-
-    applyPaginate(qb, rest);
-
-    const proto = await childBaseModel.getProto();
-    const data = await this.execAndParse(
-      qb,
-      await childTable.getColumns(this.context),
-    );
-    return data.map((c) => {
-      c.__proto__ = proto;
-      return c;
-    });
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getMmChildrenExcludedList({ colId, pid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getHmChildrenExcludedList(
     { colId, pid = null },
     args,
   ): Promise<any> {
-    const { where, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const childBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-    const parentBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: parentTable,
-    });
-    await parentTable.getColumns(this.context);
-
-    const childView = await relColOptions.getChildView(this.context);
-
-    const childTn = childBaseModel.getTnPath(childTable);
-    const parentTn = parentBaseModel.getTnPath(parentTable);
-
-    const tn = childTn;
-    const rtn = parentTn;
-
-    const qb = this.dbDriver(tn).where((qb) => {
-      qb.whereNotIn(
-        cn,
-        this.dbDriver(rtn)
-          .select(rcn)
-          // .where(parentTable.primaryKey.cn, pid)
-          .where(_wherePk(parentTable.primaryKeys, pid)),
-      ).orWhereNull(cn);
-    });
-
-    if (+rest?.shuffle) {
-      await this.shuffle({ qb });
-    }
-
-    await childBaseModel.selectObject({ qb });
-
-    const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: childView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: pid,
-    });
-    // sort by primary key if not autogenerated string
-    // if autogenerated string sort by created_at column if present
-    if (childTable.primaryKey && childTable.primaryKey.ai) {
-      qb.orderBy(childTable.primaryKey.column_name);
-    } else if (childTable.columns.find((c) => c.column_name === 'created_at')) {
-      qb.orderBy('created_at');
-    }
-
-    applyPaginate(qb, rest);
-
-    const proto = await childBaseModel.getProto();
-    const data = await this.execAndParse(
-      qb,
-      await childTable.getColumns(this.context),
-    );
-    return data.map((c) => {
-      c.__proto__ = proto;
-      return c;
-    });
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getHmChildrenExcludedList({ colId, pid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getHmChildrenExcludedListCount(
     { colId, pid = null },
     args,
   ): Promise<any> {
-    const { where } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    const parentTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-
-    const childView = await relColOptions.getChildView(this.context);
-
-    const childBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-
-    const childTn = childBaseModel.getTnPath(childTable);
-    const parentTn = this.getTnPath(parentTable);
-
-    const tn = childTn;
-    const rtn = parentTn;
-    await parentTable.getColumns(this.context);
-
-    const qb = this.dbDriver(tn)
-      .count(`*`, { as: 'count' })
-      .where((qb) => {
-        qb.whereNotIn(
-          cn,
-          this.dbDriver(rtn)
-            .select(rcn)
-            // .where(parentTable.primaryKey.cn, pid)
-            .where(_wherePk(parentTable.primaryKeys, pid)),
-        ).orWhereNull(cn);
-      });
-
-    const aliasColObjMap = await childTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: childView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: pid,
-    });
-
-    return (await this.execAndParse(qb, null, { raw: true, first: true }))
-      ?.count;
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getHmChildrenExcludedListCount({ colId, pid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getExcludedOneToOneChildrenList(
     { colId, cid = null },
     args,
   ): Promise<any> {
-    const { where, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const parentTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    const parentModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: parentTable,
-    });
-    const childModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-
-    const childView = await relColOptions.getChildView(this.context);
-    let listArgs: any = {};
-    if (childView) {
-      const { dependencyFields } = await getAst(this.context, {
-        model: childTable,
-        query: {},
-        view: childView,
-        throwErrorIfInvalidParams: false,
-      });
-      listArgs = dependencyFields;
-    }
-
-    const rtn = this.getTnPath(parentTable);
-    const tn = this.getTnPath(childTable);
-    await childTable.getColumns(this.context);
-
-    // one-to-one relation is combination of both hm and bt to identify table which have
-    // foreign key column(similar to bt) we are adding a boolean flag `bt` under meta
-    const isBt = relColumn.meta?.bt;
-
-    const qb = this.dbDriver(isBt ? rtn : tn).where((qb) => {
-      qb.whereNotIn(
-        isBt ? rcn : cn,
-        this.dbDriver(isBt ? tn : rtn)
-          .select(isBt ? cn : rcn)
-          .where(_wherePk((isBt ? childTable : parentTable).primaryKeys, cid))
-          .whereNotNull(isBt ? cn : rcn),
-      ).orWhereNull(isBt ? rcn : cn);
-    });
-
-    if (+rest?.shuffle) {
-      await this.shuffle({ qb });
-    }
-
-    // pre-load columns for later user
-    await parentTable.getColumns(this.context);
-    await childTable.getColumns(this.context);
-
-    await (isBt ? parentModel : childModel).selectObject({
-      qb,
-      fieldsSet: listArgs.fieldsSet,
-      viewId: childView?.id,
-    });
-
-    // extract col-alias map based on the correct relation table
-    const aliasColObjMap = await (relColumn.meta?.bt
-      ? parentTable
-      : childTable
-    ).getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: childView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: cid,
-    });
-
-    // sort by primary key if not autogenerated string
-    // if autogenerated string sort by created_at column if present
-    if (parentTable.primaryKey && parentTable.primaryKey.ai) {
-      qb.orderBy(parentTable.primaryKey.column_name);
-    } else if (
-      parentTable.columns.find((c) => c.column_name === 'created_at')
-    ) {
-      qb.orderBy('created_at');
-    }
-
-    applyPaginate(qb, rest);
-
-    const proto = await (isBt ? parentModel : childModel).getProto();
-    const data = await this.execAndParse(
-      qb,
-      await (isBt ? parentTable : childTable).getColumns(this.context),
-    );
-
-    return data.map((c) => {
-      c.__proto__ = proto;
-      return c;
-    });
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getExcludedOneToOneChildrenList({ colId, cid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getBtChildrenExcludedListCount(
     { colId, cid = null },
     args,
   ): Promise<any> {
-    const { where } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const parentTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-
-    const parentBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: parentTable,
-    });
-
-    const childTn = this.getTnPath(childTable);
-    const parentTn = parentBaseModel.getTnPath(parentTable);
-
-    const rtn = parentTn;
-    const tn = childTn;
-    await childTable.getColumns(this.context);
-
-    const qb = this.dbDriver(rtn)
-      .where((qb) => {
-        qb.whereNotIn(
-          rcn,
-          this.dbDriver(tn)
-            .select(cn)
-            // .where(childTable.primaryKey.cn, cid)
-            .where(_wherePk(childTable.primaryKeys, cid))
-            .whereNotNull(cn),
-        );
-      })
-      .count(`*`, { as: 'count' });
-
-    const aliasColObjMap = await parentTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    const targetView = await relColOptions.getChildView(this.context);
-
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: targetView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: cid,
-    });
-
-    return (await this.execAndParse(qb, null, { raw: true, first: true }))
-      ?.count;
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getBtChildrenExcludedListCount({ colId, cid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async countExcludedOneToOneChildren(
     { colId, cid = null },
     args,
   ): Promise<any> {
-    const { where } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const parentTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-
-    const childView = await relColOptions.getChildView(this.context);
-    const parentBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: parentTable,
-    });
-    const childBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: childTable,
-    });
-    const childTn = childBaseModel.getTnPath(childTable);
-    const parentTn = parentBaseModel.getTnPath(parentTable);
-
-    const rtn = parentTn;
-    const tn = childTn;
-
-    // pre-load columns for later user
-    await childTable.getColumns(this.context);
-    await parentTable.getColumns(this.context);
-
-    // one-to-one relation is combination of both hm and bt to identify table which have
-    // foreign key column(similar to bt) we are adding a boolean flag `bt` under meta
-    const isBt = relColumn.meta?.bt;
-
-    const qb = this.dbDriver(isBt ? rtn : tn)
-      .where((qb) => {
-        qb.whereNotIn(
-          isBt ? rcn : cn,
-          this.dbDriver(isBt ? tn : rtn)
-            .select(isBt ? cn : rcn)
-            .where(_wherePk((isBt ? childTable : parentTable).primaryKeys, cid))
-            .whereNotNull(isBt ? cn : rcn),
-        ).orWhereNull(isBt ? rcn : cn);
-      })
-      .count(`*`, { as: 'count' });
-
-    // extract col-alias map based on the correct relation table
-    const aliasColObjMap = await (relColumn.meta?.bt
-      ? parentTable
-      : childTable
-    ).getAliasColObjMap(this.context);
-
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: childView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: cid,
-    });
-
-    return (await this.execAndParse(qb, null, { raw: true, first: true }))
-      ?.count;
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).countExcludedOneToOneChildren({ colId, cid }, args);
   }
 
   // todo: naming & optimizing
-  @trace()
   public async getBtChildrenExcludedList(
     { colId, cid = null },
     args,
   ): Promise<any> {
-    const { where, ...rest } = this._getListArgs(args as any);
-    const relColumn = (await this.model.getColumns(this.context)).find(
-      (c) => c.id === colId,
-    );
-    const relColOptions = (await relColumn.getColOptions(
-      this.context,
-    )) as LinkToAnotherRecordColumn;
-
-    const rcn = (await relColOptions.getParentColumn(this.context)).column_name;
-    const parentTable = await (
-      await relColOptions.getParentColumn(this.context)
-    ).getModel(this.context);
-    const cn = (await relColOptions.getChildColumn(this.context)).column_name;
-    const childTable = await (
-      await relColOptions.getChildColumn(this.context)
-    ).getModel(this.context);
-    const parentBaseModel = await Model.getBaseModelSQL(this.context, {
-      dbDriver: this.dbDriver,
-      model: parentTable,
-    });
-
-    const childTn = this.getTnPath(childTable);
-    const parentTn = parentBaseModel.getTnPath(parentTable);
-
-    const rtn = parentTn;
-    const tn = childTn;
-    await childTable.getColumns(this.context);
-
-    const qb = this.dbDriver(rtn).where((qb) => {
-      qb.whereNotIn(
-        rcn,
-        this.dbDriver(tn)
-          .select(cn)
-          // .where(childTable.primaryKey.cn, cid)
-          .where(_wherePk(childTable.primaryKeys, cid))
-          .whereNotNull(cn),
-      );
-    });
-
-    if (+rest?.shuffle) {
-      await this.shuffle({ qb });
-    }
-
-    await parentBaseModel.selectObject({ qb });
-
-    const aliasColObjMap = await parentTable.getAliasColObjMap(this.context);
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap);
-
-    const targetView = await relColOptions.getChildView(this.context);
-    await this.getCustomConditionsAndApply({
-      column: relColumn,
-      view: targetView,
-      filters: filterObj,
-      args,
-      qb,
-      rowId: cid,
-    });
-
-    // sort by primary key if not autogenerated string
-    // if autogenerated string sort by created_at column if present
-    if (parentTable.primaryKey && parentTable.primaryKey.ai) {
-      qb.orderBy(parentTable.primaryKey.column_name);
-    } else if (
-      parentTable.columns.find((c) => c.column_name === 'created_at')
-    ) {
-      qb.orderBy('created_at');
-    }
-
-    applyPaginate(qb, rest);
-
-    const proto = await parentBaseModel.getProto();
-    const data = await this.execAndParse(
-      qb,
-      await parentTable.getColumns(this.context),
-    );
-
-    return data.map((c) => {
-      c.__proto__ = proto;
-      return c;
-    });
+    return relationDataFetcher({
+      baseModel: this,
+      logger,
+    }).getBtChildrenExcludedList({ colId, cid }, args);
   }
 
-  public async applySortAndFilter({
+  // #endregion relation list count part 2
+
+  async applySortAndFilter({
     table,
     view,
     where,
     qb,
     sort,
+    filters,
+    onlySort = false,
+    skipViewFilter = false,
+    skipSort = false,
   }: {
     table: Model;
     view?: View;
     where: string;
+    filters?: Filter[];
     qb;
-    sort: string;
+    sort?: string;
+    onlySort?: boolean;
+    skipViewFilter?: boolean;
+    skipSort?: boolean;
   }) {
     const childAliasColMap = await table.getAliasColObjMap(this.context);
 
-    const filter = extractFilterFromXwhere(this.context, where, childAliasColMap);
-    await conditionV2(
-      this,
-      [
-        ...(view
-          ? [
-              new Filter({
-                children:
-                  (await Filter.rootFilterList(this.context, {
-                    viewId: view.id,
-                  })) || [],
-                is_group: true,
-              }),
-            ]
-          : []),
-        ...filter.filters,
-      ],
-      qb,
-    );
-    if (!sort) return;
-    const sortObj = extractSortsObject(this.context, sort, childAliasColMap, false, undefined);
-    if (sortObj) await sortV2(this, sortObj, qb);
+    if (!onlySort) {
+      const { filters: filter } = extractFilterFromXwhere(
+        this.context,
+        where,
+        childAliasColMap,
+      );
+      await conditionV2(
+        this,
+        [
+          ...(view && !skipViewFilter
+            ? [
+                new Filter({
+                  children:
+                    (await Filter.rootFilterList(this.context, {
+                      viewId: view.id,
+                    })) || [],
+                  is_group: true,
+                }),
+              ]
+            : []),
+          ...(filter || []),
+          ...(filters || []),
+        ],
+        qb,
+      );
+    }
+
+    // First priority on v3 api is sort object if exists
+    if (this.context.api_version === NcApiVersion.V3 && sort) {
+      const sortObj = extractSortsObject(
+        this.context,
+        sort,
+        childAliasColMap,
+        undefined,
+        this.context.api_version,
+      );
+      if (sortObj) await sortV2(this, sortObj, qb);
+    }
+    // First priority View Sort
+    if (view && !skipSort) {
+      const sortObj = await view.getSorts(this.context);
+      await sortV2(this, sortObj, qb);
+    }
+
+    if (!skipSort) {
+      let orderColumnBy = '';
+      await table.getColumns(this.context);
+      const orderCol = table.columns?.find((col) => col.uidt === UITypes.Order);
+      const childTn = await this.getTnPath(table);
+      if (orderCol) {
+        orderColumnBy = `${childTn}.${orderCol.column_name}`;
+      }
+      // Second priority Order column sort
+      if (orderColumnBy) {
+        qb.orderBy(orderColumnBy);
+      }
+
+      // backward compatibility: if not v3, apply sort on this priority
+      if (this.context.api_version !== NcApiVersion.V3) {
+        // Third priority query string sort
+        if (!sort) return;
+        const sortObj = extractSortsObject(
+          this.context,
+          sort,
+          childAliasColMap,
+          undefined,
+          this.context.api_version,
+        );
+        if (sortObj) await sortV2(this, sortObj, qb);
+      }
+    }
   }
 
   async getSelectQueryBuilderForFormula(
@@ -3947,12 +1508,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return qb;
   }
 
-  async getProto(options?: {ignoreCache: boolean}) {
+  async getProto({
+    apiVersion = NcApiVersion.V2,
+  }: {
+    apiVersion?: NcApiVersion;
+  } = {}) {
     if (this._proto) {
-      return this._proto;
+      return this._proto as ResolverObj;
     }
 
-    const proto: any = { __columnAliases: {} };
+    const proto: ResolverObj = {
+      __columnAliases: {},
+    };
     const columns = await this.model.getColumns(this.context);
     await Promise.all(
       columns.map(async (column) => {
@@ -3990,21 +1557,19 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                 this.context,
               )) as LinkToAnotherRecordColumn;
 
+              const { refContext } = colOptions.getRelContext(this.context);
+
               if (colOptions?.type === 'hm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
-                    var args = (listLoader as any).args
-                    if (options != null ){
-                      args["ignoreCache"] = options.ignoreCache ?? false
-                    }
-                    
                     if (ids.length > 1) {
                       const data = await this.multipleHmList(
                         {
                           colId: column.id,
                           ids,
+                          apiVersion,
                         },
-                        args,
+                        (listLoader as any).args,
                       );
                       return ids.map((id: string) =>
                         data[id] ? data[id] : [],
@@ -4015,8 +1580,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                           {
                             colId: column.id,
                             id: ids[0],
+                            apiVersion,
+                            nested: true,
                           },
-                          args,
+                          (listLoader as any).args,
                         ),
                       ];
                     }
@@ -4040,18 +1607,17 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               } else if (colOptions.type === 'mm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
-                    var args = (listLoader as any).args ?? []
-                    if (options != null) {
-                      args["ignoreCache"] = options.ignoreCache ?? false
-                    }
                     if (ids?.length > 1) {
-                      const data = await this.multipleMmListFast(
+                      const data = await this.multipleMmList(
                         {
                           parentIds: ids,
                           colId: column.id,
+                          apiVersion,
+                          nested: true,
                         },
-                        args,
+                        (listLoader as any).args,
                       );
+
                       return data;
                     } else {
                       return [
@@ -4059,8 +1625,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                           {
                             parentId: ids[0],
                             colId: column.id,
+                            apiVersion,
+                            nested: true,
                           },
-                          args,
+                          (listLoader as any).args,
                         ),
                       ];
                     }
@@ -4086,7 +1654,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                 const colOptions = (await column.getColOptions(
                   this.context,
                 )) as LinkToAnotherRecordColumn;
-                const pCol = await Column.get(this.context, {
+
+                const pCol = await Column.get(refContext, {
                   colId: colOptions.fk_parent_column_id,
                 });
                 const cCol = await Column.get(this.context, {
@@ -4124,7 +1693,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                     });
 
                     const data = await (
-                      await Model.getBaseModelSQL(this.context, {
+                      await Model.getBaseModelSQL(refContext, {
                         id: pCol.fk_model_id,
                         dbDriver: this.dbDriver,
                       })
@@ -4169,7 +1738,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
                   return await readLoader.load(this?.[cCol?.title]);
                 };
-                // todo : handle mm
               } else if (colOptions.type === 'oo') {
                 const isBt = column.meta?.bt;
 
@@ -4178,7 +1746,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                   const colOptions = (await column.getColOptions(
                     this.context,
                   )) as LinkToAnotherRecordColumn;
-                  const pCol = await Column.get(this.context, {
+                  const pCol = await Column.get(refContext, {
                     colId: colOptions.fk_parent_column_id,
                   });
                   const cCol = await Column.get(this.context, {
@@ -4216,7 +1784,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                       });
 
                       const data = await (
-                        await Model.getBaseModelSQL(this.context, {
+                        await Model.getBaseModelSQL(refContext, {
                           id: pCol.fk_model_id,
                           dbDriver: this.dbDriver,
                         })
@@ -4265,16 +1833,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                   const listLoader = new DataLoader(
                     async (ids: string[]) => {
                       if (ids.length > 1) {
-                        var args = (listLoader as any).args ?? []
-                        if (options != null ){
-                          args["ignoreCache"] = options.ignoreCache ?? false
-                        }
                         const data = await this.multipleHmList(
                           {
                             colId: column.id,
                             ids,
                           },
-                          args,
+                          (listLoader as any).args,
                         );
                         return ids.map((id: string) =>
                           data[id] ? data[id]?.[0] : null,
@@ -4320,55 +1884,32 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return proto;
   }
 
-  _getListArgs(args: XcFilterWithAlias): XcFilter {
-    const obj: XcFilter = extractLimitAndOffset(args);
-    obj.where = args.filter || args.where || args.w || '';
-    obj.having = args.having || args.h || '';
-    obj.shuffle = args.shuffle || args.r || '';
-    obj.condition = args.condition || args.c || {};
-    obj.conditionGraph = args.conditionGraph || {};
-    obj.limit = Math.max(
-      Math.min(
-        Math.max(+(args.limit || args.l), 0) ||
-          BaseModelSqlv2.config.limitDefault,
-        BaseModelSqlv2.config.limitMax,
-      ),
-      BaseModelSqlv2.config.limitMin,
-    );
-    obj.offset = Math.max(+(args.offset || args.o) || 0, 0);
-    obj.fields = args.fields || args.f;
-    obj.sort = args.sort || args.s;
-    obj.pks = args.pks;
-    obj.aggregation = args.aggregation || [];
-    obj.column_name = args.column_name;
-    return obj;
+  _getListArgs(
+    args: XcFilterWithAlias,
+    {
+      apiVersion = NcApiVersion.V2,
+      nested = false,
+    }: {
+      apiVersion?: NcApiVersion;
+      nested?: boolean;
+    } = {},
+  ): XcFilter {
+    return getListArgs(args, this.model, {
+      ignoreAssigningWildcardSelect: true,
+      apiVersion,
+      nested,
+    });
   }
 
-  @trace()
   public async shuffle({ qb }: { qb: Knex.QueryBuilder }): Promise<void> {
     if (this.isMySQL) {
       qb.orderByRaw('RAND()');
     } else if (this.isPg || this.isSqlite) {
       qb.orderByRaw('RANDOM()');
-    } else if (this.isMssql) {
-      qb.orderByRaw('NEWID()');
     }
   }
 
-  // todo:
-  //  pass view id as argument
-  //  add option to get only pk and pv
-  @trace()
-  public async selectObject({
-    qb,
-    columns: _columns,
-    fields: _fields,
-    extractPkAndPv,
-    viewId,
-    fieldsSet,
-    alias,
-    validateFormula,
-  }: {
+  public async selectObject(params: {
     fieldsSet?: Set<string>;
     qb: Knex.QueryBuilder & Knex.QueryInterface;
     columns?: Column[];
@@ -4377,516 +1918,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     viewId?: string;
     alias?: string;
     validateFormula?: boolean;
+    pkAndPvOnly?: boolean;
   }): Promise<void> {
-    // keep a common object for all columns to share across all columns
-    const aliasToColumnBuilder = {};
-    let viewOrTableColumns: Column[] | { fk_column_id?: string }[];
-
-    const res = {};
-    let view: View;
-    let fields: string[];
-
-    if (fieldsSet?.size) {
-      viewOrTableColumns =
-        _columns || (await this.model.getColumns(this.context));
-    } else {
-      view = await View.get(this.context, viewId);
-      const viewColumns =
-        viewId && (await View.getColumns(this.context, viewId));
-      fields = Array.isArray(_fields) ? _fields : _fields?.split(',');
-
-      // const columns = _columns ?? (await this.model.getColumns(this.context));
-      // for (const column of columns) {
-      viewOrTableColumns =
-        viewColumns || _columns || (await this.model.getColumns(this.context));
-    }
-    for (const viewOrTableColumn of viewOrTableColumns) {
-      const column =
-        viewOrTableColumn instanceof Column
-          ? viewOrTableColumn
-          : await Column.get(this.context, {
-              colId: (viewOrTableColumn as GridViewColumn).fk_column_id,
-            });
-      // hide if column marked as hidden in view
-      // of if column is system field and system field is hidden
-      if (
-        shouldSkipField(
-          fieldsSet,
-          viewOrTableColumn,
-          view,
-          column,
-          extractPkAndPv,
-        )
-      ) {
-        continue;
-      }
-
-      if (!checkColumnRequired(column, fields, extractPkAndPv)) continue;
-
-      switch (column.uidt) {
-        case UITypes.CreatedTime:
-        case UITypes.LastModifiedTime:
-        case UITypes.DateTime:
-          {
-            const columnName = await getColumnName(
-              this.context,
-              column,
-              _columns || (await this.model.getColumns(this.context)),
-            );
-            if (this.isMySQL) {
-              // MySQL stores timestamp in UTC but display in timezone
-              // To verify the timezone, run `SELECT @@global.time_zone, @@session.time_zone;`
-              // If it's SYSTEM, then the timezone is read from the configuration file
-              // if a timezone is set in a DB, the retrieved value would be converted to the corresponding timezone
-              // for example, let's say the global timezone is +08:00 in DB
-              // the value 2023-01-01 10:00:00 (UTC) would display as 2023-01-01 18:00:00 (UTC+8)
-              // our existing logic is based on UTC, during the query, we need to take the UTC value
-              // hence, we use CONVERT_TZ to convert back to UTC value
-              res[sanitize(getAs(column) || columnName)] = this.dbDriver.raw(
-                `CONVERT_TZ(??, @@GLOBAL.time_zone, '+00:00')`,
-                [`${sanitize(alias || this.tnPath)}.${columnName}`],
-              );
-              break;
-            } else if (this.isPg) {
-              // if there is no timezone info,
-              // convert to database timezone,
-              // then convert to UTC
-              if (
-                column.dt !== 'timestamp with time zone' &&
-                column.dt !== 'timestamptz'
-              ) {
-                res[sanitize(getAs(column) || columnName)] = this.dbDriver
-                  .raw(
-                    `?? AT TIME ZONE CURRENT_SETTING('timezone') AT TIME ZONE 'UTC'`,
-                    [`${sanitize(alias || this.tnPath)}.${columnName}`],
-                  )
-                  .wrap('(', ')');
-                break;
-              }
-            } else if (this.isMssql) {
-              // if there is no timezone info,
-              // convert to database timezone,
-              // then convert to UTC
-              if (column.dt !== 'datetimeoffset') {
-                res[sanitize(getAs(column) || columnName)] = this.dbDriver.raw(
-                  `CONVERT(DATETIMEOFFSET, ?? AT TIME ZONE 'UTC')`,
-                  [`${sanitize(alias || this.tnPath)}.${columnName}`],
-                );
-                break;
-              }
-            }
-            res[sanitize(getAs(column) || columnName)] = sanitize(
-              `${alias || this.tnPath}.${columnName}`,
-            );
-          }
-          break;
-        case UITypes.LinkToAnotherRecord:
-        case UITypes.Lookup:
-          break;
-        case UITypes.QrCode: {
-          const qrCodeColumn = await column.getColOptions<QrCodeColumn>(
-            this.context,
-          );
-
-          if (!qrCodeColumn.fk_qr_value_column_id) {
-            qb.select(this.dbDriver.raw(`? as ??`, ['ERR!', getAs(column)]));
-            break;
-          }
-
-          const qrValueColumn = await Column.get(this.context, {
-            colId: qrCodeColumn.fk_qr_value_column_id,
-          });
-
-          // If the referenced value cannot be found: cancel current iteration
-          if (qrValueColumn == null) {
-            break;
-          }
-
-          switch (qrValueColumn.uidt) {
-            case UITypes.Formula:
-              try {
-                const selectQb = await this.getSelectQueryBuilderForFormula(
-                  qrValueColumn,
-                  alias,
-                  validateFormula,
-                  aliasToColumnBuilder,
-                );
-                qb.select({
-                  [column.column_name]: selectQb.builder,
-                });
-              } catch {
-                continue;
-              }
-              break;
-            default: {
-              qb.select({ [column.column_name]: qrValueColumn.column_name });
-              break;
-            }
-          }
-
-          break;
-        }
-        case UITypes.Barcode: {
-          const barcodeColumn = await column.getColOptions<BarcodeColumn>(
-            this.context,
-          );
-
-          if (!barcodeColumn.fk_barcode_value_column_id) {
-            qb.select(this.dbDriver.raw(`? as ??`, ['ERR!', getAs(column)]));
-            break;
-          }
-
-          const barcodeValueColumn = await Column.get(this.context, {
-            colId: barcodeColumn.fk_barcode_value_column_id,
-          });
-
-          // If the referenced value cannot be found: cancel current iteration
-          if (barcodeValueColumn == null) {
-            break;
-          }
-
-          switch (barcodeValueColumn.uidt) {
-            case UITypes.Formula:
-              try {
-                const selectQb = await this.getSelectQueryBuilderForFormula(
-                  barcodeValueColumn,
-                  alias,
-                  validateFormula,
-                  aliasToColumnBuilder,
-                );
-                qb.select({
-                  [getAs(column)]: selectQb.builder,
-                });
-              } catch {
-                continue;
-              }
-              break;
-            default: {
-              qb.select({
-                [getAs(column)]: barcodeValueColumn.column_name,
-              });
-              break;
-            }
-          }
-
-          break;
-        }
-        case UITypes.Formula:
-          {
-            try {
-              const selectQb = await this.getSelectQueryBuilderForFormula(
-                column,
-                alias,
-                validateFormula,
-                aliasToColumnBuilder,
-              );
-              qb.select(
-                this.dbDriver.raw(`?? as ??`, [
-                  selectQb.builder,
-                  getAs(column),
-                ]),
-              );
-            } catch (e) {
-              logger.log(e);
-              // return dummy select
-              qb.select(this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]));
-            }
-          }
-          break;
-        case UITypes.Button: {
-          try {
-            const colOption = column.colOptions as ButtonColumn;
-            if (colOption.type === ButtonActionsType.Url) {
-              const selectQb = await this.getSelectQueryBuilderForFormula(
-                column,
-                alias,
-                validateFormula,
-                aliasToColumnBuilder,
-              );
-              switch (this.dbDriver.client.config.client) {
-                case 'mysql2':
-                  qb.select(
-                    this.dbDriver.raw(
-                      `JSON_OBJECT('type', ? , 'label', ?, 'url', ??) as ??`,
-                      [
-                        colOption.type,
-                        `${colOption.label}`,
-                        selectQb.builder,
-                        getAs(column),
-                      ],
-                    ),
-                  );
-                  break;
-                case 'pg':
-                  qb.select(
-                    this.dbDriver.raw(
-                      `json_build_object('type', ? ,'label', ?, 'url', ??) as ??`,
-                      [
-                        colOption.type,
-                        `${colOption.label}`,
-                        selectQb.builder,
-                        getAs(column),
-                      ],
-                    ),
-                  );
-                  break;
-                case 'sqlite3':
-                  qb.select(
-                    this.dbDriver.raw(
-                      `json_object('type', ?, 'label', ?, 'url', ??) as ??`,
-                      [
-                        colOption.type,
-                        `${colOption.label}`,
-                        selectQb.builder,
-                        getAs(column),
-                      ],
-                    ),
-                  );
-                  break;
-                default:
-                  qb.select(this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]));
-              }
-            } else if (colOption.type === ButtonActionsType.Webhook) {
-              switch (this.dbDriver.client.config.client) {
-                case 'mysql2':
-                  qb.select(
-                    this.dbDriver.raw(
-                      `JSON_OBJECT('type', ?, 'label', ?, 'fk_webhook_id', ?) as ??`,
-                      [
-                        colOption.type,
-                        `${colOption.label}`,
-                        colOption.fk_webhook_id,
-                        getAs(column),
-                      ],
-                    ),
-                  );
-                  break;
-                case 'pg':
-                  qb.select(
-                    this.dbDriver.raw(
-                      `json_build_object('type', ?, 'label', ?, 'fk_webhook_id', ?) as ??`,
-                      [
-                        colOption.type,
-                        `${colOption.label}`,
-                        colOption.fk_webhook_id,
-                        getAs(column),
-                      ],
-                    ),
-                  );
-                  break;
-                case 'sqlite3':
-                  qb.select(
-                    this.dbDriver.raw(
-                      `json_object('type', ?, 'label', ?, 'fk_webhook_id', ?) as ??`,
-                      [
-                        colOption.type,
-                        `${colOption.label}`,
-                        colOption.fk_webhook_id,
-                        getAs(column),
-                      ],
-                    ),
-                  );
-                  break;
-                default:
-                  qb.select(this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]));
-              }
-            }
-          } catch (e) {
-            logger.log(e);
-            // return dummy select
-            qb.select(this.dbDriver.raw(`'ERR' as ??`, [getAs(column)]));
-          }
-          break;
-        }
-        case UITypes.Rollup:
-        case UITypes.Links:
-          qb.select(
-            (
-              await genRollupSelectv2({
-                baseModelSqlv2: this,
-                // tn: this.title,
-                knex: this.dbDriver,
-                // column,
-                alias,
-                columnOptions: (await column.getColOptions(
-                  this.context,
-                )) as RollupColumn,
-              })
-            ).builder.as(getAs(column)),
-          );
-          break;
-        case UITypes.CreatedBy:
-        case UITypes.LastModifiedBy: {
-          const columnName = await getColumnName(
-            this.context,
-            column,
-            _columns || (await this.model.getColumns(this.context)),
-          );
-
-          res[sanitize(getAs(column) || columnName)] = sanitize(
-            `${alias || this.tnPath}.${columnName}`,
-          );
-          break;
-        }
-        case UITypes.SingleSelect: {
-          res[sanitize(getAs(column) || column.column_name)] =
-            this.dbDriver.raw(`COALESCE(NULLIF(??, ''), NULL)`, [
-              sanitize(column.column_name),
-            ]);
-          break;
-        }
-        default:
-          if (this.isPg) {
-            if (column.dt === 'bytea') {
-              res[sanitize(getAs(column) || column.column_name)] =
-                this.dbDriver.raw(
-                  `encode(??.??, '${
-                    column.meta?.format === 'hex' ? 'hex' : 'escape'
-                  }')`,
-                  [alias || this.model.table_name, column.column_name],
-                );
-              break;
-            }
-          }
-
-          res[sanitize(getAs(column) || column.column_name)] = sanitize(
-            `${alias || this.tnPath}.${column.column_name}`,
-          );
-          break;
-      }
-    }
-    qb.select(res);
+    return await selectObject(this, logger)(params);
   }
 
-  async insert(data, trx?, cookie?, _disableOptimization = false) {
-    try {
-      const columns = await this.model.getColumns(this.context);
-
-      // exclude auto increment columns in body
-      for (const col of columns) {
-        if (col.ai) {
-          const keyName =
-            data?.[col.column_name] !== undefined ? col.column_name : col.title;
-
-          if (data[keyName]) {
-            delete data[keyName];
-          }
-        }
-      }
-
-      await populatePk(this.context, this.model, data);
-
-      // todo: filter based on view
-      const insertObj = await this.model.mapAliasToColumn(
-        this.context,
-        data,
-        this.clientMeta,
-        this.dbDriver,
-        columns,
-      );
-
-      await this.validate(insertObj, columns);
-
-      if ('beforeInsert' in this) {
-        await this.beforeInsert(insertObj, trx, cookie);
-      }
-
-      await this.prepareNocoData(insertObj, true, cookie);
-
-      let response;
-      // const driver = trx ? trx : this.dbDriver;
-
-      const query = this.dbDriver(this.tnPath).insert(insertObj);
-      if ((this.isPg || this.isMssql) && this.model.primaryKey) {
-        query.returning(
-          `${this.model.primaryKey.column_name} as ${this.model.primaryKey.id}`,
-        );
-        response = await this.execAndParse(query, null, { raw: true });
-      }
-
-      const ai = this.model.columns.find((c) => c.ai);
-
-      let ag: Column;
-      if (!ai) ag = this.model.columns.find((c) => c.meta?.ag);
-
-      // handle if autogenerated primary key is used
-      if (ag) {
-        if (!response) await this.execAndParse(query);
-        response = await this.readByPk(
-          this.extractCompositePK({
-            rowId: insertObj[ag.column_name],
-            insertObj,
-            ag,
-            ai,
-          }),
-          false,
-          {},
-          { ignoreView: true, getHiddenColumn: true },
-        );
-      } else if (
-        !response ||
-        (typeof response?.[0] !== 'object' && response?.[0] !== null)
-      ) {
-        let id;
-        if (response?.length) {
-          id = response[0];
-        } else {
-          const res = await this.execAndParse(query, null, {
-            raw: true,
-          });
-          id = res?.id ?? res[0]?.insertId ?? res;
-        }
-
-        if (ai) {
-          if (this.isSqlite) {
-            // sqlite doesnt return id after insert
-            id = (
-              await this.execAndParse(
-                this.dbDriver(this.tnPath)
-                  .select(ai.column_name)
-                  .max(ai.column_name, { as: '__nc_ai_id' }),
-                null,
-                { raw: true, first: true },
-              )
-            )?.__nc_ai_id;
-          } else if (this.isSnowflake || this.isDatabricks) {
-            id = (
-              await this.execAndParse(
-                this.dbDriver(this.tnPath).max(ai.column_name, {
-                  as: '__nc_ai_id',
-                }),
-                null,
-                { raw: true, first: true },
-              )
-            ).__nc_ai_id;
-          }
-          response = await this.readByPk(
-            this.extractCompositePK({ rowId: id, insertObj, ag, ai }),
-            false,
-            {},
-            { ignoreView: true, getHiddenColumn: true },
-          );
-        } else {
-          response = data;
-        }
-      } else if (ai) {
-        const id = Array.isArray(response)
-          ? response?.[0]?.[ai.id]
-          : response?.[ai.id];
-        response = await this.readByPk(
-          this.extractCompositePK({ rowId: id, insertObj, ag, ai }),
-          false,
-          {},
-          { ignoreView: true, getHiddenColumn: true },
-        );
-      }
-
-      await this.afterInsert(response, trx, cookie);
-      return Array.isArray(response) ? response[0] : response;
-    } catch (e) {
-      await this.errorInsert(e, data, trx, cookie);
-      throw e;
-    }
+  async insert(data, request: NcRequest, trx?, _disableOptimization = false) {
+    return await baseModelInsert(this).single(
+      data,
+      request,
+      trx,
+      _disableOptimization,
+    );
   }
 
   async delByPk(id, _trx?, cookie?) {
@@ -4906,10 +1949,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const execQueries: ((trx: Knex.Transaction) => Promise<any>)[] = [];
 
       for (const column of this.model.columns) {
-        if (column.uidt !== UITypes.LinkToAnotherRecord) continue;
+        if (!isLinksOrLTAR(column)) continue;
 
         const colOptions =
           await column.getColOptions<LinkToAnotherRecordColumn>(this.context);
+
+        const { mmContext, refContext } = colOptions.getRelContext(
+          this.context,
+        );
 
         switch (colOptions.type) {
           case 'mm':
@@ -4918,12 +1965,18 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                 this.context,
                 colOptions.fk_mm_model_id,
               );
-              const mmParentColumn = await Column.get(this.context, {
+
+              const mmBaseModel = await Model.getBaseModelSQL(mmContext, {
+                model: mmTable,
+                dbDriver: this.dbDriver,
+              });
+
+              const mmParentColumn = await Column.get(mmContext, {
                 colId: colOptions.fk_mm_child_column_id,
               });
 
               execQueries.push((trx) =>
-                trx(this.getTnPath(mmTable.table_name))
+                trx(mmBaseModel.getTnPath(mmTable.table_name))
                   .del()
                   .where(mmParentColumn.column_name, id),
               );
@@ -4932,19 +1985,23 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           case 'hm':
             {
               // skip if it's an mm table column
-              const relatedTable = await colOptions.getRelatedTable(
-                this.context,
-              );
+              const relatedTable = await colOptions.getRelatedTable(refContext);
+
               if (relatedTable.mm) {
                 break;
               }
 
-              const childColumn = await Column.get(this.context, {
+              const refBaseModel = await Model.getBaseModelSQL(refContext, {
+                model: relatedTable,
+                dbDriver: this.dbDriver,
+              });
+
+              const childColumn = await Column.get(refContext, {
                 colId: colOptions.fk_child_column_id,
               });
 
               execQueries.push((trx) =>
-                trx(this.getTnPath(relatedTable.table_name))
+                trx(refBaseModel.getTnPath(relatedTable.table_name))
                   .update({
                     [childColumn.column_name]: null,
                   })
@@ -5038,6 +2095,39 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       }
     }
     return res;
+  }
+
+  async moveRecord({
+    rowId,
+    beforeRowId,
+  }: {
+    rowId: string;
+    beforeRowId: string;
+    cookie?: { user?: any };
+  }) {
+    const columns = await this.model.getColumns(this.context);
+
+    const row = await this.readByPk(
+      rowId,
+      false,
+      {},
+      { ignoreView: true, getHiddenColumn: true },
+    );
+
+    if (!row) {
+      NcError.recordNotFound(rowId);
+    }
+
+    const newRecordOrder = (
+      await this.getUniqueOrdersBeforeItem(beforeRowId, 1)
+    )[0];
+
+    return await this.dbDriver(this.tnPath)
+      .update({
+        [columns.find((c) => c.uidt === UITypes.Order).column_name]:
+          newRecordOrder.toString(),
+      })
+      .where(await this._wherePk(rowId));
   }
 
   async updateByPk(id, data, trx?, cookie?, _disableOptimization = false) {
@@ -5139,15 +2229,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   public getTnPath(tb: { table_name: string } | string, alias?: string) {
     const tn = typeof tb === 'string' ? tb : tb.table_name;
-    const schema = (this.dbDriver as any).searchPath?.();
     if (this.isPg && this.schema) {
       return `${this.schema}.${tn}${alias ? ` as ${alias}` : ``}`;
-    } else if (this.isMssql && schema) {
-      return this.dbDriver.raw(`??.??${alias ? ' as ??' : ''}`, [
-        schema,
-        tn,
-        ...(alias ? [alias] : []),
-      ]);
     } else if (this.isSnowflake) {
       return `${[
         this.dbDriver.client.config.connection.database,
@@ -5166,7 +2249,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   public get clientMeta() {
     return {
       isSqlite: this.isSqlite,
-      isMssql: this.isMssql,
       isPg: this.isPg,
       isMySQL: this.isMySQL,
       // isSnowflake: this.isSnowflake,
@@ -5175,10 +2257,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   get isSqlite() {
     return this.clientType === 'sqlite3';
-  }
-
-  get isMssql() {
-    return this.clientType === 'mssql';
   }
 
   get isPg() {
@@ -5201,7 +2279,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return this.dbDriver.clientType();
   }
 
-  @trace()
   public async readRecord(params: {
     idOrRecord: string | Record<string, any>;
     fieldsSet?: Set<string>;
@@ -5241,24 +2318,48 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       let rowId = null;
 
       const nestedCols = columns.filter((c) => isLinksOrLTAR(c));
-      const { postInsertOps, preInsertOps } = await this.prepareNestedLinkQb({
-        nestedCols,
-        data,
-        insertObj,
-      });
+      // eslint-disable-next-line prefer-const
+      let { postInsertOps, preInsertOps, postInsertAuditOps } =
+        await this.prepareNestedLinkQb({
+          nestedCols,
+          data,
+          insertObj,
+          req: request,
+        });
+      const attachmentOperations =
+        await new AttachmentUrlUploadPreparator().prepareAttachmentUrlUpload(
+          this,
+          {
+            attachmentCols: columns.filter((c) => isAttachment(c)),
+            data: insertObj,
+            req: request,
+          },
+        );
+      postInsertOps = [
+        ...(postInsertOps ?? []),
+        ...(attachmentOperations.postInsertOps ?? []),
+      ];
+      preInsertOps = [
+        ...(preInsertOps ?? []),
+        ...(attachmentOperations.preInsertOps ?? []),
+      ];
 
       await this.validate(insertObj, columns);
 
-      await this.beforeInsert(insertObj, this.dbDriver, cookie);
+      await this.beforeInsert(insertObj, this.dbDriver, request);
 
-      await this.prepareNocoData(insertObj, true, cookie);
+      await this.prepareNocoData(insertObj, true, request, null, {
+        ncOrder: null,
+        before: param?.before,
+        undo: param?.undo,
+      });
 
       await this.runOps(preInsertOps.map((f) => f()));
 
       let response;
       const query = this.dbDriver(this.tnPath).insert(insertObj);
 
-      if ((this.isPg || this.isMssql) && this.model.primaryKey) {
+      if (this.isPg && this.model.primaryKey) {
         query.returning(
           `${this.model.primaryKey.column_name} as ${this.model.primaryKey.id}`,
         );
@@ -5335,8 +2436,29 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           : response?.[ai.id];
       }
       rowId = this.extractCompositePK({ ai, ag, rowId, insertObj });
+      // when auto generated (with default) pk columns
+      if (!rowId && response.length === 1) {
+        if (this.model.primaryKeys.length === 1) {
+          rowId = response[0][this.model.primaryKeys[0].id];
+        } else {
+          const responseWithColumnTitle = Object.keys(response[0]).reduce(
+            (res, colId) => {
+              const col = this.model.columns.find((c) => c.id === colId);
+              res[col.title] = response[0][colId];
+              return res;
+            },
+            {},
+          );
+          rowId = this.extractPksValues(responseWithColumnTitle, true);
+        }
+      }
 
       await this.runOps(postInsertOps.map((f) => f(rowId)));
+
+      // run link audit operations after link insert
+      for (const f of postInsertAuditOps) {
+        await f(rowId);
+      }
 
       if (this.model.primaryKey && rowId !== null && rowId !== undefined) {
         response = await this.readRecord({
@@ -5350,9 +2472,13 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
       await this.afterInsert({
         data: response,
-        insertData: response,
         trx: this.dbDriver,
         req: request,
+        insertData: data,
+      });
+
+      await this.statsUpdate({
+        count: 1,
       });
 
       return response;
@@ -5404,160 +2530,13 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return rowId;
   }
 
-  public async prepareNestedLinkQb({
-    nestedCols,
-    data,
-    insertObj,
-  }: {
+  async prepareNestedLinkQb(param: {
     nestedCols: Column[];
     data: Record<string, any>;
     insertObj: Record<string, any>;
+    req: NcRequest;
   }) {
-    const postInsertOps: ((rowId: any) => Promise<string>)[] = [];
-    const preInsertOps: (() => Promise<string>)[] = [];
-    const postInsertAuditOps: ((rowId: any) => Promise<void>)[] = [];
-    for (const col of nestedCols) {
-      if (col.title in data) {
-        const colOptions = await col.getColOptions<LinkToAnotherRecordColumn>(
-          this.context,
-        );
-
-        // parse data if it's JSON string
-        let nestedData;
-        try {
-          nestedData =
-            typeof data[col.title] === 'string'
-              ? JSON.parse(data[col.title])
-              : data[col.title];
-        } catch {
-          continue;
-        }
-        switch (colOptions.type) {
-          case RelationTypes.BELONGS_TO:
-            {
-              if (typeof nestedData !== 'object') continue;
-              const childCol = await colOptions.getChildColumn(this.context);
-              const parentCol = await colOptions.getParentColumn(this.context);
-              insertObj[childCol.column_name] = nestedData?.[parentCol.title];
-            }
-            break;
-          case RelationTypes.ONE_TO_ONE:
-            {
-              const isBt = col.meta?.bt;
-
-              const childCol = await colOptions.getChildColumn(this.context);
-              const childModel = await childCol.getModel(this.context);
-              await childModel.getColumns(this.context);
-
-              if (isBt) {
-                // if array then extract value from first element
-                const colVal = Array.isArray(nestedData)
-                  ? nestedData[0]?.[childModel.primaryKey.title]
-                  : nestedData[childModel.primaryKey.title];
-                // todo: unlink the ref record
-                preInsertOps.push(async () => {
-                  return this.dbDriver(this.getTnPath(childModel.table_name))
-                    .update({
-                      [childCol.column_name]: null,
-                    })
-                    .where(childCol.column_name, colVal)
-                    .toQuery();
-                });
-
-                if (typeof nestedData !== 'object') continue;
-                const childCol = await colOptions.getChildColumn(this.context);
-                const parentCol = await colOptions.getParentColumn(
-                  this.context,
-                );
-                insertObj[childCol.column_name] = nestedData?.[parentCol.title];
-              } else {
-                const parentCol = await colOptions.getParentColumn(
-                  this.context,
-                );
-                const parentModel = await parentCol.getModel(this.context);
-                await parentModel.getColumns(this.context);
-
-                postInsertOps.push(async (rowId) => {
-                  let refId = rowId;
-                  if (parentModel.primaryKey.id !== parentCol.id) {
-                    refId = this.dbDriver(
-                      this.getTnPath(parentModel.table_name),
-                    )
-                      .select(parentCol.column_name)
-                      .where(parentModel.primaryKey.column_name, rowId)
-                      .first();
-                  }
-                  return this.dbDriver(this.getTnPath(childModel.table_name))
-                    .update({
-                      [childCol.column_name]: refId,
-                    })
-                    .where(
-                      childModel.primaryKey.column_name,
-                      nestedData[childModel.primaryKey.title],
-                    )
-                    .toQuery();
-                });
-              }
-            }
-            break;
-          case RelationTypes.HAS_MANY:
-            {
-              if (!Array.isArray(nestedData)) continue;
-              const childCol = await colOptions.getChildColumn(this.context);
-              const parentCol = await colOptions.getParentColumn(this.context);
-              const childModel = await childCol.getModel(this.context);
-              const parentModel = await parentCol.getModel(this.context);
-              await childModel.getColumns(this.context);
-              await parentModel.getColumns(this.context);
-
-              postInsertOps.push(async (rowId) => {
-                let refId = rowId;
-                if (parentModel.primaryKey.id !== parentCol.id) {
-                  refId = this.dbDriver(this.getTnPath(parentModel.table_name))
-                    .select(parentCol.column_name)
-                    .where(parentModel.primaryKey.column_name, rowId)
-                    .first();
-                }
-                return this.dbDriver(this.getTnPath(childModel.table_name))
-                  .update({
-                    [childCol.column_name]: refId,
-                  })
-                  .whereIn(
-                    childModel.primaryKey.column_name,
-                    nestedData?.map((r) => r[childModel.primaryKey.title]),
-                  )
-                  .toQuery();
-              });
-            }
-            break;
-          case RelationTypes.MANY_TO_MANY: {
-            if (!Array.isArray(nestedData)) continue;
-            postInsertOps.push(async (rowId) => {
-              const parentModel = await colOptions
-                .getParentColumn(this.context)
-                .then((c) => c.getModel(this.context));
-              await parentModel.getColumns(this.context);
-              const parentMMCol = await colOptions.getMMParentColumn(
-                this.context,
-              );
-              const childMMCol = await colOptions.getMMChildColumn(
-                this.context,
-              );
-              const mmModel = await colOptions.getMMModel(this.context);
-
-              const rows = nestedData.map((r) => ({
-                [parentMMCol.column_name]: r[parentModel.primaryKey.title],
-                [childMMCol.column_name]: rowId,
-              }));
-              return this.dbDriver(this.getTnPath(mmModel.table_name))
-                .insert(rows)
-                .toQuery();
-            });
-          }
-        }
-      }
-    }
-    return { postInsertOps, preInsertOps, postInsertAuditOps };
+    return new NestedLinkPreparator().prepareNestedLinkQb(this, param);
   }
 
   async bulkUpsert(
@@ -5567,11 +2546,13 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       cookie,
       raw = false,
       foreign_key_checks = true,
+      undo = false,
     }: {
       chunkSize?: number;
       cookie?: any;
       raw?: boolean;
       foreign_key_checks?: boolean;
+      undo?: boolean;
     } = {},
   ) {
     let trx;
@@ -5606,14 +2587,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const dataWithoutPks = [];
 
       for (const data of preparedDatas) {
-        const pkValues = this.extractPksValues(data);
+        const pkValues = this.extractPksValues(data, true);
         if (pkValues !== 'N/A' && pkValues !== undefined) {
           dataWithPks.push({ pk: pkValues, data });
         } else {
           await this.prepareNocoData(data, true, cookie, null, {
             ncOrder: order,
+            undo,
           });
-          order++;
+          order = order?.plus(1);
           // const insertObj = this.handleValidateBulkInsert(data, columns);
           dataWithoutPks.push(data);
         }
@@ -5638,8 +2620,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         } else {
           await this.prepareNocoData(data, true, cookie, null, {
             ncOrder: order,
+            undo,
           });
-          order++;
+          order = order?.plus(1);
           // const insertObj = this.handleValidateBulkInsert(data, columns);
           toInsert.push(data);
         }
@@ -5698,7 +2681,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           }
 
           responses =
-            !raw && (this.isPg || this.isMssql)
+            !raw && this.isPg
               ? await trx
                   .batchInsert(this.tnPath, toInsert, chunkSize)
                   .returning(
@@ -5741,12 +2724,20 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       if (insertedDatas.length === 1) {
         await this.afterInsert({
           data: insertedDataList[0],
-          insertData: insertedDataList[0],
           trx: this.dbDriver,
           req: cookie,
+          insertData: datas[0],
+        });
+
+        await this.statsUpdate({
+          count: insertedDataList.length,
         });
       } else if (insertedDatas.length > 1) {
         await this.afterBulkInsert(insertedDataList, this.dbDriver, cookie);
+
+        await this.statsUpdate({
+          count: insertedDataList.length,
+        });
       }
 
       if (updatedDataList.length === 1) {
@@ -5773,7 +2764,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  async chunkList(args: { pks: string[]; chunkSize?: number; apiVersion?: NcApiVersion }) {
+  async chunkList(args: {
+    pks: string[];
+    chunkSize?: number;
+    apiVersion?: NcApiVersion;
+    args?: Record<string, any>;
+  }) {
     const { pks, chunkSize = 1000 } = args;
 
     const data = [];
@@ -5784,6 +2780,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const chunkData = await this.list(
         {
           pks: chunk.join(','),
+          apiVersion: args.apiVersion,
+          ...(args.args || {}),
         },
         {
           limitOverride: chunk.length,
@@ -5800,7 +2798,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   async handleValidateBulkInsert(
     d: Record<string, any>,
     columns?: Column[],
-    params = { allowSystemColumn: false },
+    params: {
+      allowSystemColumn: boolean;
+      undo: boolean;
+      typecast: boolean;
+    } = {
+      allowSystemColumn: false,
+      undo: false,
+      typecast: false,
+    },
   ) {
     const { allowSystemColumn } = params;
     const cols = columns || (await this.model.getColumns(this.context));
@@ -5809,7 +2815,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     for (let i = 0; i < cols.length; ++i) {
       const col = cols[i];
 
-      if (col.title in d) {
+      if (col.title in d || col.id in d) {
         if (
           isCreatedOrLastModifiedTimeCol(col) ||
           isCreatedOrLastModifiedByCol(col)
@@ -5819,10 +2825,33 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           );
         }
 
+        if (isVirtualCol(col) && !isLinksOrLTAR(col)) {
+          NcError.badRequest(
+            `Column "${col.title}" is virtual and cannot be updated`,
+          );
+        }
+
         if (
           col.system &&
           !allowSystemColumn &&
-          [UITypes.ForeignKey, UITypes.Order].includes(col.uidt)
+          [UITypes.ForeignKey].includes(col.uidt)
+        ) {
+          NcError.badRequest(
+            `Column "${col.title}" is system column and cannot be updated`,
+          );
+        }
+
+        if (!allowSystemColumn && col.readonly) {
+          NcError.badRequest(
+            `Column "${col.title}" is readonly column and cannot be updated`,
+          );
+        }
+
+        if (
+          col.system &&
+          !allowSystemColumn &&
+          col.uidt !== UITypes.Order &&
+          !params.undo
         ) {
           NcError.badRequest(
             `Column "${col.title}" is system column and cannot be updated`,
@@ -5832,24 +2861,40 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
       // populate pk columns
       if (col.pk) {
-        if (col.meta?.ag && !d[col.title]) {
-          d[col.title] = col.meta?.ag === 'nc' ? `rc_${nanoidv2()}` : uuidv4();
+        if (col.meta?.ag && !(d[col.title] ?? d[col.id])) {
+          if (d[col.id]) {
+            d[col.title] = d[col.id];
+          } else {
+            d[col.title] =
+              col.meta?.ag === 'nc' ? `rc_${nanoidv2()}` : uuidv4();
+          }
         }
       }
 
       // map alias to column
       if (!isVirtualCol(col)) {
-        let val =
-          d?.[col.column_name] !== undefined
-            ? d?.[col.column_name]
-            : d?.[col.title];
-        if (val !== undefined) {
+        let val = !ncIsUndefined(d?.[col.column_name])
+          ? d?.[col.column_name]
+          : !ncIsUndefined(d?.[col.title])
+          ? d?.[col.title]
+          : d?.[col.id];
+        if (val !== undefined && this.context.api_version !== NcApiVersion.V3) {
           if (col.uidt === UITypes.Attachment && typeof val !== 'string') {
             val = JSON.stringify(val);
           }
           if (col.uidt === UITypes.DateTime && dayjs(val).isValid()) {
             val = this.formatDate(val);
           }
+          if (col.uidt === UITypes.Duration) {
+            if (col.meta?.duration !== undefined) {
+              const duration = convertDurationToSeconds(val, col.meta.duration);
+              if (duration._isValid) {
+                val = duration._sec;
+              }
+            }
+          }
+          insertObj[sanitize(col.column_name)] = val;
+        } else if (val !== undefined) {
           insertObj[sanitize(col.column_name)] = val;
         }
       }
@@ -5862,30 +2907,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         const cn = col.column_name;
         const columnTitle = col.title;
         if (validate) {
-          const { func, msg } = validate;
-          for (let j = 0; j < func.length; ++j) {
-            const fn =
-              typeof func[j] === 'string'
-                ? customValidators[func[j]]
-                  ? customValidators[func[j]]
-                  : Validator[func[j]]
-                : func[j];
-            const columnValue = insertObj?.[cn] || insertObj?.[columnTitle];
-            const arg =
-              typeof func[j] === 'string' ? columnValue + '' : columnValue;
-            if (
-              ![null, undefined, ''].includes(columnValue) &&
-              !(fn.constructor.name === 'AsyncFunction'
-                ? await fn(arg)
-                : fn(arg))
-            ) {
-              NcError.badRequest(
-                msg[j]
-                  .replace(/\{VALUE}/g, columnValue)
-                  .replace(/\{cn}/g, columnTitle),
-              );
-            }
-          }
+          await validateFuncOnColumn({
+            column: col,
+            value:
+              insertObj?.[cn] ??
+              insertObj?.[columnTitle] ??
+              insertObj?.[col.id],
+            apiVersion: this.context.api_version,
+            customValidators: customValidators as any,
+          });
         }
       }
     }
@@ -5894,7 +2924,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   // Helper method to format date
   private formatDate(val: string): any {
-    const { isMySQL, isSqlite, isMssql, isPg } = this.clientMeta;
+    const { isMySQL, isSqlite, isPg } = this.clientMeta;
     if (val.indexOf('-') < 0 && val.indexOf('+') < 0 && val.slice(-1) !== 'Z') {
       // if no timezone is given,
       // then append +00:00 to make it as UTC
@@ -5927,14 +2957,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       return this.dbDriver.raw(`? AT TIME ZONE CURRENT_SETTING('timezone')`, [
         dayjs(val).utc().format('YYYY-MM-DD HH:mm:ssZ'),
       ]);
-    } else if (isMssql) {
-      // convert ot UTC
-      // e.g. 2023-05-10T08:49:32.000Z -> 2023-05-10 08:49:32-08:00
-      // then convert to db timezone
-      return this.dbDriver.raw(
-        `SWITCHOFFSET(CONVERT(datetimeoffset, ?), DATENAME(TzOffset, SYSDATETIMEOFFSET()))`,
-        [dayjs(val).utc().format('YYYY-MM-DD HH:mm:ssZ')],
-      );
     } else {
       // e.g. 2023-01-01T12:00:00.000Z -> 2023-01-01 12:00:00+00:00
       return dayjs(val).utc().format('YYYY-MM-DD HH:mm:ssZ');
@@ -5943,18 +2965,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   async bulkInsert(
     datas: any[],
-    {
-      chunkSize: _chunkSize = 100,
-      cookie,
-      foreign_key_checks = true,
-      skip_hooks = false,
-      raw = false,
-      insertOneByOneAsFallback = false,
-      isSingleRecordInsertion = false,
-      allowSystemColumn = false,
-    }: {
+    params?: {
       chunkSize?: number;
-      cookie?: any;
+      cookie?: NcRequest;
       foreign_key_checks?: boolean;
       skip_hooks?: boolean;
       raw?: boolean;
@@ -5964,179 +2977,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       typecast?: boolean;
       undo?: boolean;
       apiVersion?: NcApiVersion;
-    } = {},
+    },
   ) {
-    let trx;
-    try {
-      const insertDatas = raw ? datas : [];
-      let postInsertOps: ((rowId: any) => Promise<string>)[] = [];
-      let preInsertOps: (() => Promise<string>)[] = [];
-      let aiPkCol: Column;
-      let agPkCol: Column;
-      if (!raw) {
-        const columns = await this.model.getColumns(this.context);
-
-        const order = await this.getHighestOrderInTable();
-
-        const nestedCols = columns.filter((c) => isLinksOrLTAR(c));
-
-        for (const [index, d] of datas.entries()) {
-          const insertObj = await this.handleValidateBulkInsert(d, columns, {
-            allowSystemColumn,
-          });
-
-          await this.prepareNocoData(insertObj, true, cookie, null, {
-            ncOrder: order.plus(index),
-          });
-
-          // prepare nested link data for insert only if it is single record insertion
-          if (isSingleRecordInsertion) {
-            const operations = await this.prepareNestedLinkQb({
-              nestedCols,
-              data: d,
-              insertObj,
-            });
-
-            postInsertOps = operations.postInsertOps;
-            preInsertOps = operations.preInsertOps;
-          }
-
-          insertDatas.push(insertObj);
-        }
-
-        aiPkCol = this.model.primaryKeys.find((pk) => pk.ai);
-        agPkCol = this.model.primaryKeys.find((pk) => pk.meta?.ag);
-      } else {
-        await this.model.getColumns(this.context);
-
-        const order = await this.getHighestOrderInTable();
-
-        await Promise.all(
-          insertDatas.map(
-            async (d, i) =>
-              await this.prepareNocoData(d, true, cookie, null, {
-                raw,
-                ncOrder: order + i,
-              }),
-          ),
-        );
-      }
-
-      if ('beforeBulkInsert' in this) {
-        await this.beforeBulkInsert(insertDatas, trx, cookie);
-      }
-
-      // await this.beforeInsertb(insertDatas, null);
-
-      // fallbacks to `10` if database client is sqlite
-      // to avoid `too many SQL variables` error
-      // refer : https://www.sqlite.org/limits.html
-      const chunkSize = this.isSqlite ? 10 : _chunkSize;
-
-      trx = await this.dbDriver.transaction();
-
-      if (!foreign_key_checks) {
-        if (this.isPg) {
-          await trx.raw('set session_replication_role to replica;');
-        } else if (this.isMySQL) {
-          await trx.raw('SET foreign_key_checks = 0;');
-        }
-      }
-
-      await this.runOps(
-        preInsertOps.map((f) => f()),
-        trx,
-      );
-
-      let responses;
-
-      // insert one by one as fallback to get ids for sqlite and mysql
-      if (insertOneByOneAsFallback && (this.isSqlite || this.isMySQL)) {
-        // sqlite and mysql doesn't support returning, so insert one by one and return ids
-        responses = [];
-
-        for (const insertData of insertDatas) {
-          const query = trx(this.tnPath).insert(insertData);
-          let id = (await query)[0];
-
-          if (agPkCol) {
-            id = insertData[agPkCol.column_name];
-          }
-
-          responses.push(
-            this.extractCompositePK({
-              rowId: id,
-              ai: aiPkCol,
-              ag: agPkCol,
-              insertObj: insertData,
-              force: true,
-            }) || insertData,
-          );
-        }
-      } else {
-        const returningObj: Record<string, string> = {};
-
-        for (const col of this.model.primaryKeys) {
-          returningObj[col.title] = col.column_name;
-        }
-
-        responses =
-          !raw && (this.isPg || this.isMssql)
-            ? await trx
-                .batchInsert(this.tnPath, insertDatas, chunkSize)
-                .returning(this.model.primaryKeys?.length ? returningObj : '*')
-            : await trx.batchInsert(this.tnPath, insertDatas, chunkSize);
-      }
-
-      if (!foreign_key_checks) {
-        if (this.isPg) {
-          await trx.raw('set session_replication_role to origin;');
-        } else if (this.isMySQL) {
-          await trx.raw('SET foreign_key_checks = 1;');
-        }
-      }
-
-      // insert nested link data for single record insertion
-      if (isSingleRecordInsertion) {
-        let rowId = responses[0][this.model.primaryKey?.title];
-
-        if (aiPkCol || agPkCol) {
-          rowId = this.extractCompositePK({
-            rowId,
-            ai: aiPkCol,
-            ag: agPkCol,
-            insertObj: insertDatas[0],
-          });
-        }
-
-        await this.runOps(
-          postInsertOps.map((f) => f(rowId)),
-          trx,
-        );
-      }
-
-      await trx.commit();
-
-      if (!raw && !skip_hooks) {
-        if (isSingleRecordInsertion) {
-          const insertData = await this.readByPk(responses[0]);
-          await this.afterInsert({
-            data: insertData,
-            insertData: insertData,
-            trx: this.dbDriver,
-            req: cookie,
-          });
-        } else {
-          await this.afterBulkInsert(insertDatas, this.dbDriver, cookie);
-        }
-      }
-
-      return responses;
-    } catch (e) {
-      await trx?.rollback();
-      // await this.errorInsertb(e, data, null);
-      throw e;
-    }
+    return await baseModelInsert(this).bulk(datas, params);
   }
 
   async bulkUpdate(
@@ -6146,6 +2989,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       raw = false,
       throwExceptionIfNotExist = false,
       isSingleRecordUpdation = false,
+      allowSystemColumn = false,
+      typecast = false,
+      apiVersion,
+      skip_hooks = false,
     }: {
       cookie?: any;
       raw?: boolean;
@@ -6158,13 +3005,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     } = {},
   ) {
     let transaction;
+    const readChunkSize = 100;
+
     try {
       const columns = await this.model.getColumns(this.context);
 
       // validate update data
       if (!raw) {
         for (const d of datas) {
-          await this.validate(d, columns);
+          await this.validate(d, columns, { allowSystemColumn, typecast });
         }
       }
 
@@ -6186,105 +3035,130 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const newData = [];
       const updatePkValues = [];
       const toBeUpdated = [];
-      const pkAndData: { pk: any; data: any }[] = [];
-      const readChunkSize = 100;
-      for (const [i, d] of updateDatas.entries()) {
-        const pkValues = getCompositePkValue(
-          this.model.primaryKeys,
-          this.extractPksValues(d),
-        );
+      const pkAndData: { pk: string; data: any }[] = [];
+
+      for (const d of updateDatas) {
+        const pkValues = this.extractPksValues(d, true);
+
         if (!pkValues) {
-          // throw or skip if no pk provided
-          if (throwExceptionIfNotExist) {
-            NcError.recordNotFound(pkValues);
-          }
+          if (throwExceptionIfNotExist) NcError.recordNotFound(pkValues);
           continue;
         }
-        if (!raw) {
-          pkAndData.push({
-            pk: pkValues,
-            data: d,
-          });
 
-          if (
-            pkAndData.length >= readChunkSize ||
-            i === updateDatas.length - 1
-          ) {
-            const tempToRead = pkAndData.splice(0, pkAndData.length);
-            const oldRecords = await this.chunkList({
-              pks: tempToRead.map((v) => v.pk),
-            });
+        pkAndData.push({ pk: pkValues, data: d });
+      }
 
-            for (const record of tempToRead) {
-              const oldRecord = oldRecords.find((r) =>
-                this.comparePks(this.extractPksValues(r), record.pk),
-              );
+      const attachmentCols = columns.filter((col) => isAttachment(col));
+      let postUpdateOps: (() => Promise<string>)[] = [];
 
-              if (!oldRecord) {
-                // throw or skip if no record found
-                if (throwExceptionIfNotExist) {
-                  NcError.recordNotFound(record);
-                }
-                continue;
-              }
+      for (let i = 0; i < pkAndData.length; i += readChunkSize) {
+        const chunk = pkAndData.slice(i, i + readChunkSize);
+        const pksToRead = chunk.map((v) => v.pk);
 
-              await this.prepareNocoData(record.data, false, cookie, oldRecord);
+        const oldRecords = await this.chunkList({ pks: pksToRead });
+        const oldRecordsMap = new Map<string, any>(
+          oldRecords.map((r) => [this.extractPksValues(r, true), r]),
+        );
 
-              prevData.push(oldRecord);
-            }
+        for (const { pk, data } of chunk) {
+          const oldRecord = oldRecordsMap.get(pk);
 
-            for (let i = 0; i < tempToRead.length; i++) {
-              const { pk, data } = tempToRead[i];
-              const wherePk = await this._wherePk(pk, true);
-              toBeUpdated.push({ d: data, wherePk });
-              updatePkValues.push(
-                getCompositePkValue(this.model.primaryKeys, {
-                  ...prevData[i],
-                  ...data,
-                }),
-              );
-            }
+          if (!oldRecord) {
+            // removed data from error param, record not found message do not use data
+            if (throwExceptionIfNotExist) NcError.recordNotFound(pk);
+            continue;
           }
-        } else {
-          await this.prepareNocoData(d, false, cookie, null, { raw });
+          await this.prepareNocoData(data, false, cookie, oldRecord);
+          prevData.push(oldRecord);
+          if (attachmentCols.length > 0) {
+            const attachmentOperation =
+              await new AttachmentUrlUploadPreparator().prepareAttachmentUrlUpload(
+                this,
+                {
+                  attachmentCols,
+                  data,
+                  req: cookie,
+                },
+              );
+            postUpdateOps = postUpdateOps.concat(
+              attachmentOperation.postInsertOps.map((ops) => {
+                return () => ops(pk);
+              }),
+            );
+          }
 
-          const wherePk = await this._wherePk(pkValues, true);
-
-          toBeUpdated.push({ d, wherePk });
+          const wherePk = await this._wherePk(pk, true);
+          toBeUpdated.push({ d: data, wherePk });
 
           updatePkValues.push(
-            getCompositePkValue(this.model.primaryKeys, {
-              ...pkValues,
-              ...d,
-            }),
+            this.extractPksValues(
+              {
+                ...oldRecord,
+                ...data,
+              },
+              true,
+            ),
           );
         }
       }
 
       transaction = await this.dbDriver.transaction();
+      try {
+        if (
+          this.model.primaryKeys.length === 1 &&
+          (this.isPg || this.isMySQL || this.isSqlite)
+        ) {
+          await batchUpdate(
+            transaction,
+            this.tnPath,
+            toBeUpdated.map((o) => o.d),
+            this.model.primaryKey.column_name,
+          );
+        } else {
+          for (const o of toBeUpdated) {
+            await transaction(this.tnPath).update(o.d).where(o.wherePk);
+          }
+        }
 
-      for (const o of toBeUpdated) {
-        await transaction(this.tnPath).update(o.d).where(o.wherePk);
+        await transaction.commit();
+      } catch (ex) {
+        await transaction.rollback();
       }
 
-      await transaction.commit();
+      if (apiVersion === NcApiVersion.V3) {
+        // remove LTAR/Links if part of the update request
+        await this.updateLTARCols({
+          datas,
+          cookie,
+        });
+        await Promise.all(postUpdateOps.map((ops) => ops()));
+      }
 
       if (!raw) {
-        while (updatePkValues.length) {
+        for (let i = 0; i < updatePkValues.length; i += readChunkSize) {
+          const pksChunk = updatePkValues.slice(i, i + readChunkSize);
+
           const updatedRecords = await this.list(
-            {
-              pks: updatePkValues.splice(0, readChunkSize).join(','),
-            },
-            {
-              limitOverride: readChunkSize,
-            },
+            { pks: pksChunk.join(',') },
+            { limitOverride: pksChunk.length },
           );
 
-          newData.push(...updatedRecords);
+          const updatedRecordsMap = new Map(
+            updatedRecords.map((record) => [
+              this.extractPksValues(record, true),
+              record,
+            ]),
+          );
+
+          for (const pk of pksChunk) {
+            if (updatedRecordsMap.has(pk)) {
+              newData.push(updatedRecordsMap.get(pk));
+            }
+          }
         }
       }
 
-      if (!raw) {
+      if (!raw && !skip_hooks) {
         if (isSingleRecordUpdation) {
           await this.afterUpdate(
             prevData[0],
@@ -6305,6 +3179,104 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  async updateLTARCols({ datas, cookie }: { datas: any[]; cookie: NcRequest }) {
+    const trx = await this.dbDriver.transaction();
+
+    const trxBaseModel = await Model.getBaseModelSQL(this.context, {
+      model: this.model,
+      dbDriver: trx,
+    });
+
+    try {
+      for (const col of this.model.columns) {
+        // skip if not LTAR or Links
+        if (!isLinksOrLTAR(col)) continue;
+
+        for (const d of datas) {
+          const rowId = this.extractPksValues(d, true);
+
+          // skip if value is not part of the update
+          if (!(col.title in d)) continue;
+
+          // extract existing link values to current record
+          let existingLinks = [];
+
+          if (col.colOptions.type === RelationTypes.MANY_TO_MANY) {
+            existingLinks = await trxBaseModel.mmList({
+              colId: col.id,
+              parentId: rowId,
+            });
+          } else if (col.colOptions.type === RelationTypes.HAS_MANY) {
+            existingLinks = await trxBaseModel.hmList({
+              colId: col.id,
+              id: rowId,
+            });
+          } else {
+            existingLinks = await trxBaseModel.btRead({
+              colId: col.id,
+              id: rowId,
+            });
+          }
+
+          existingLinks = existingLinks || [];
+
+          if (!Array.isArray(existingLinks)) {
+            existingLinks = [existingLinks];
+          }
+
+          const idsToLink = [
+            ...(Array.isArray(d[col.title])
+              ? d[col.title]
+              : [d[col.title]]
+            ).map((rec) => this.extractPksValues(rec, true)),
+          ];
+
+          // check for any missing links then unlink
+          const idsToUnlink = existingLinks
+            .map((link) => this.extractPksValues(link, true))
+            .filter((existingLinkPk) => {
+              const index = idsToLink.findIndex((linkPk) => {
+                return existingLinkPk === linkPk;
+              });
+
+              // if found remove from both list
+              if (index > -1) {
+                idsToLink.splice(index, 1);
+                return false;
+              }
+
+              return true;
+            });
+
+          // check for missing links in new data and unlink them
+          if (idsToUnlink?.length) {
+            await trxBaseModel.removeLinks({
+              colId: col.id,
+              childIds: idsToUnlink,
+              cookie,
+              rowId,
+            });
+          }
+
+          // check for new data and link them
+          if (idsToLink?.length) {
+            await trxBaseModel.addLinks({
+              colId: col.id,
+              childIds: idsToLink,
+              cookie,
+              rowId,
+            });
+          }
+        }
+      }
+
+      await trx.commit();
+    } catch (e) {
+      await trx.rollback();
+      throw e;
+    }
+  }
+
   async bulkUpdateAll(
     args: {
       where?: string;
@@ -6313,7 +3285,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipValidationAndHooks?: boolean;
     } = {},
     data,
-    { cookie }: { cookie?: any } = {},
+    { cookie, skip_hooks = false }: { cookie: NcRequest; skip_hooks?: boolean },
   ) {
     try {
       let count = 0;
@@ -6349,7 +3321,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           this.context,
           columns,
         );
-        const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap, true);
+        const { filters: filterObj } = extractFilterFromXwhere(
+          this.context,
+          where,
+          aliasColObjMap,
+          true,
+        );
 
         const conditionObj = [
           new Filter({
@@ -6389,12 +3366,21 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           )
         )?.count;
 
+        // insert records updating record details to audit table
+        await this.bulkAudit({
+          qb: qb.clone(),
+          data,
+          conditions: conditionObj,
+          req: cookie,
+          event: AuditV1OperationTypes.DATA_BULK_UPDATE,
+        });
+
         qb.update(updateData);
 
         await this.execAndParse(qb, null, { raw: true });
       }
 
-      if (!args.skipValidationAndHooks)
+      if (!args.skipValidationAndHooks && !skip_hooks)
         await this.afterBulkUpdate(null, count, this.dbDriver, cookie, true);
 
       return count;
@@ -6486,6 +3472,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         }
       }
 
+      await this.beforeBulkDelete(deleted, this.dbDriver, cookie);
+
       const execQueries: ((
         trx: Knex.Transaction,
         ids: any[],
@@ -6494,19 +3482,21 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const base = await this.getSource();
 
       for (const column of this.model.columns) {
-        if (column.uidt !== UITypes.LinkToAnotherRecord) continue;
+        if (!isLinksOrLTAR(column)) continue;
 
         const colOptions =
           await column.getColOptions<LinkToAnotherRecordColumn>(this.context);
+        const { mmContext, refContext, childContext } =
+          await colOptions.getParentChildContext(this.context);
 
         switch (colOptions.type) {
           case 'mm':
             {
               const mmTable = await Model.get(
-                this.context,
+                mmContext,
                 colOptions.fk_mm_model_id,
               );
-              const mmParentColumn = await Column.get(this.context, {
+              const mmParentColumn = await Column.get(mmContext, {
                 colId: colOptions.fk_mm_child_column_id,
               });
 
@@ -6520,14 +3510,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           case 'hm':
             {
               // skip if it's an mm table column
-              const relatedTable = await colOptions.getRelatedTable(
-                this.context,
-              );
+              const relatedTable = await colOptions.getRelatedTable(refContext);
               if (relatedTable.mm) {
                 break;
               }
 
-              const childColumn = await Column.get(this.context, {
+              const childColumn = await Column.get(childContext, {
                 colId: colOptions.fk_child_column_id,
               });
 
@@ -6583,226 +3571,14 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async bulkDeleteAll(
-    args: { where?: string; filterArr?: Filter[] } = {},
-    { cookie, skip_hooks = false }: { cookie?: any; skip_hooks?: boolean } = {},
+    args: { where?: string; filterArr?: Filter[]; viewId?: string } = {},
+    { cookie, skip_hooks = false }: { cookie: NcRequest; skip_hooks?: boolean },
   ) {
-    let trx: Knex.Transaction;
-    try {
-      const columns = await this.model.getColumns(this.context);
-      const { where } = this._getListArgs(args);
-      const qb = this.dbDriver(this.tnPath);
-      const aliasColObjMap = await this.model.getAliasColObjMap(
-        this.context,
-        columns,
-      );
-      const { filters: filterObj } = extractFilterFromXwhere(this.context, where, aliasColObjMap, true);
-
-      await conditionV2(
-        this,
-        [
-          new Filter({
-            children: args.filterArr || [],
-            is_group: true,
-            logical_op: 'and',
-          }),
-          new Filter({
-            children: filterObj,
-            is_group: true,
-            logical_op: 'and',
-          }),
-        ],
-        qb,
-        undefined,
-        true,
-      );
-      const execQueries: ((trx: Knex.Transaction, qb: any) => Promise<any>)[] =
-        [];
-      // qb.del();
-
-      for (const column of this.model.columns) {
-        if (column.uidt !== UITypes.LinkToAnotherRecord) continue;
-
-        const colOptions =
-          await column.getColOptions<LinkToAnotherRecordColumn>(this.context);
-
-        if (colOptions.type === 'bt') {
-          continue;
-        }
-
-        const childColumn = await colOptions.getChildColumn(this.context);
-        const parentColumn = await colOptions.getParentColumn(this.context);
-        const parentTable = await parentColumn.getModel(this.context);
-        const childTable = await childColumn.getModel(this.context);
-        await childTable.getColumns(this.context);
-        await parentTable.getColumns(this.context);
-
-        const childTn = this.getTnPath(childTable);
-
-        switch (colOptions.type) {
-          case 'mm':
-            {
-              const vChildCol = await colOptions.getMMChildColumn(this.context);
-              const vTable = await colOptions.getMMModel(this.context);
-
-              const vTn = this.getTnPath(vTable);
-
-              execQueries.push(() =>
-                this.dbDriver(vTn)
-                  .where({
-                    [vChildCol.column_name]: this.dbDriver(childTn)
-                      .select(childColumn.column_name)
-                      .first(),
-                  })
-                  .delete(),
-              );
-            }
-            break;
-          case 'hm':
-            {
-              // skip if it's an mm table column
-              const relatedTable = await colOptions.getRelatedTable(
-                this.context,
-              );
-              if (relatedTable.mm) {
-                break;
-              }
-
-              const childColumn = await Column.get(this.context, {
-                colId: colOptions.fk_child_column_id,
-              });
-
-              execQueries.push((trx, qb) =>
-                trx(childTn)
-                  .where({
-                    [childColumn.column_name]: this.dbDriver.from(
-                      qb
-                        .select(parentColumn.column_name)
-                        // .where(_wherePk(parentTable.primaryKeys, rowId))
-                        .first()
-                        .as('___cn_alias'),
-                    ),
-                  })
-                  .update({
-                    [childColumn.column_name]: null,
-                  }),
-              );
-            }
-            break;
-        }
-      }
-
-      const source = await this.getSource();
-
-      // remove FileReferences for attachments
-      const attachmentColumns = columns.filter(
-        (c) => c.uidt === UITypes.Attachment,
-      );
-
-      // paginate all the records and find file reference ids
-      const selectQb = qb
-        .clone()
-        .select(
-          attachmentColumns
-            .map((c) => c.column_name)
-            .concat(this.model.primaryKeys.map((pk) => pk.column_name)),
-        );
-
-      const response = [];
-
-      let offset = 0;
-      const limit = 100;
-
-      const fileReferenceIds: string[] = [];
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const rows = await this.execAndParse(
-          selectQb
-            .clone()
-            .offset(offset)
-            .limit(limit + 1),
-          null,
-          {
-            raw: true,
-          },
-        );
-
-        if (rows.length === 0) {
-          break;
-        }
-
-        let lastPage = false;
-
-        if (rows.length > limit) {
-          rows.pop();
-        } else {
-          lastPage = true;
-        }
-
-        for (const row of rows) {
-          for (const c of attachmentColumns) {
-            if (row[c.column_name]) {
-              try {
-                let attachments;
-                if (typeof row[c.column_name] === 'string') {
-                  attachments = JSON.parse(row[c.column_name]);
-                  for (const attachment of attachments) {
-                    if (attachment.id) {
-                      fileReferenceIds.push(attachment.id);
-                    }
-                  }
-                }
-
-                if (Array.isArray(attachments)) {
-                  for (const attachment of attachments) {
-                    if (attachment.id) {
-                      fileReferenceIds.push(attachment.id);
-                    }
-                  }
-                }
-              } catch (e) {
-                continue;
-              }
-            }
-          }
-
-          const primaryData = {};
-
-          for (const pk of this.model.primaryKeys) {
-            primaryData[pk.title] = row[pk.column_name];
-          }
-
-          response.push(primaryData);
-        }
-
-        if (lastPage) {
-          break;
-        }
-
-        offset += limit;
-      }
-
-      await FileReference.delete(this.context, fileReferenceIds);
-
-      trx = await this.dbDriver.transaction();
-
-      // unlink LTAR data
-      if (source.isMeta()) {
-        for (const execQuery of execQueries) {
-          await execQuery(trx, qb.clone());
-        }
-      }
-
-      await qb.clone().transacting(trx).del();
-
-      await trx.commit();
-
-      await this.afterBulkDelete(response.length, this.dbDriver, cookie, true);
-
-      return response;
-    } catch (e) {
-      throw e;
-    }
+    return await new BaseModelDelete(this).bulkAll({
+      args,
+      cookie,
+      skip_hooks,
+    });
   }
 
   /**
@@ -6817,17 +3593,46 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return;
   }
 
-  @trace()
-  public async beforeInsert(data: any, _trx: any, req): Promise<void> {
+  public async beforeInsert(
+    data: any,
+    _trx: any,
+    req,
+    params?: {
+      allowSystemColumn?: boolean;
+    },
+  ): Promise<void> {
+    const { allowSystemColumn = false } = params || {};
+
+    if (!allowSystemColumn && this.model.synced) {
+      NcError._.prohibitedSyncTableOperation({
+        modelName: this.model.title,
+        operation: 'insert',
+      });
+    }
+
     await this.handleHooks('before.insert', null, data, req);
   }
 
-  @trace()
-  public async beforeBulkInsert(data: any, _trx: any, req): Promise<void> {
+  public async beforeBulkInsert(
+    data: any,
+    _trx: any,
+    req,
+    params?: {
+      allowSystemColumn?: boolean;
+    },
+  ): Promise<void> {
+    const { allowSystemColumn = false } = params || {};
+
+    if (!allowSystemColumn && this.model.synced) {
+      NcError._.prohibitedSyncTableOperation({
+        modelName: this.model.title,
+        operation: 'insert',
+      });
+    }
+
     await this.handleHooks('before.bulkInsert', null, data, req);
   }
 
-  @trace()
   public async afterInsert({
     data,
     insertData,
@@ -6841,51 +3646,207 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }): Promise<void> {
     await this.handleHooks('after.insert', null, data, req);
     const id = this.extractPksValues(data);
+    const filteredAuditData = removeBlankPropsAndMask(insertData || data, [
+      'CreatedAt',
+      'UpdatedAt',
+      // exclude virtual columns
+      ...this.model.columns
+        .filter((c) => isVirtualCol(c) || isSystemColumn(c))
+        .map((c) => c.title),
+    ]);
 
-    let details = '';
-
-    if (data && typeof data === 'object') {
-      const updateObj = await this.model.mapColumnToAlias(
-        this.context,
-        data,
-        this.model.columns?.filter((c) => !c.pk && !isSystemColumn(c)),
+    // disable external source audit in cloud
+    if (await this.isDataAuditEnabled()) {
+      await Audit.insert(
+        await generateAuditV1Payload<DataInsertPayload>(
+          AuditV1OperationTypes.DATA_INSERT,
+          {
+            context: {
+              ...this.context,
+              source_id: this.model.source_id,
+              fk_model_id: this.model.id,
+              row_id: this.extractPksValues(id, true),
+            },
+            details: {
+              data: formatDataForAudit(filteredAuditData, this.model.columns),
+              column_meta: extractColsMetaForAudit(
+                this.model.columns,
+                filteredAuditData,
+              ),
+            },
+            req,
+          },
+        ),
       );
-
-      for (const k of Object.keys(updateObj)) {
-        if (
-          updateObj[k] === null ||
-          updateObj[k] === undefined ||
-          (typeof updateObj[k] === 'string' && updateObj[k] === '')
-        ) {
-          continue;
-        }
-
-        const newValue =
-          typeof updateObj[k] === 'object'
-            ? JSON.stringify(updateObj[k])
-            : updateObj[k];
-        details += DOMPurify.sanitize(`<span class="">${k}</span>
-          : <span class="black--text green lighten-4 px-2">${newValue}</span>`);
-      }
     }
-
-    await Audit.insert({
-      fk_workspace_id: this.model.fk_workspace_id,
-      base_id: this.model.base_id,
-      source_id: this.model.source_id,
-      fk_model_id: this.model.id,
-      row_id: id,
-      op_type: AuditV1OperationTypes.DATA_INSERT,
-      description: DOMPurify.sanitize(
-        `Record with ID ${id} has been inserted into Table ${this.model.title}`,
-      ),
-      details: details || null,
-      ip: req?.clientIp,
-      user: req?.user?.email,
-    });
+    await this.handleRichTextMentions(null, data, req);
   }
 
-  @trace()
+  public async afterBulkInsert(data: any[], _trx: any, req): Promise<void> {
+    await this.handleHooks('after.bulkInsert', null, data, req);
+    let parentAuditId;
+
+    // disable external source audit in cloud
+    if (!req.ncParentAuditId && (await this.isDataAuditEnabled())) {
+      parentAuditId = await Noco.ncAudit.genNanoid(MetaTable.AUDIT);
+
+      await Audit.insert(
+        await generateAuditV1Payload<DataBulkDeletePayload>(
+          AuditV1OperationTypes.DATA_BULK_INSERT,
+          {
+            details: {},
+            context: {
+              ...this.context,
+              source_id: this.model.source_id,
+              fk_model_id: this.model.id,
+            },
+            req,
+            id: parentAuditId,
+          },
+        ),
+      );
+
+      req.ncParentAuditId = parentAuditId;
+    }
+
+    // disable external source audit in cloud
+    if (await this.isDataAuditEnabled()) {
+      // data here is not mapped to column alias
+      await Audit.insert(
+        await Promise.all(
+          data.map((d) => {
+            const data = remapWithAlias({
+              data: d,
+              columns: this.model.columns,
+            });
+
+            return generateAuditV1Payload<DataInsertPayload>(
+              AuditV1OperationTypes.DATA_INSERT,
+              {
+                context: {
+                  ...this.context,
+                  source_id: this.model.source_id,
+                  fk_model_id: this.model.id,
+                  row_id: this.extractPksValues(data, true),
+                },
+                details: {
+                  data: formatDataForAudit(
+                    removeBlankPropsAndMask(data, [
+                      'created_at',
+                      'updated_at',
+                      'created_by',
+                      'updated_by',
+                    ]),
+                    this.model.columns,
+                  ),
+                  column_meta: extractColsMetaForAudit(
+                    this.model.columns,
+                    data,
+                  ),
+                },
+                req,
+              },
+            );
+          }),
+        ),
+      );
+    }
+
+    await this.handleRichTextMentions(null, data, req);
+  }
+
+  public async afterDelete(data: any, _trx: any, req): Promise<void> {
+    const id = this.extractPksValues(data);
+
+    // disable external source audit in cloud
+    if (await this.isDataAuditEnabled()) {
+      await Audit.insert(
+        await generateAuditV1Payload<DataDeletePayload>(
+          AuditV1OperationTypes.DATA_DELETE,
+          {
+            details: {
+              data: removeBlankPropsAndMask(data, ['CreatedAt', 'UpdatedAt']),
+              column_meta: extractColsMetaForAudit(this.model.columns, data),
+            },
+            context: {
+              ...this.context,
+              source_id: this.model.source_id,
+              fk_model_id: this.model.id,
+              row_id: this.extractPksValues(id, true),
+            },
+            req,
+          },
+        ),
+      );
+    }
+
+    await this.handleHooks('after.delete', null, data, req);
+  }
+
+  public async afterBulkDelete(
+    data: any,
+    _trx: any,
+    req,
+    _isBulkAllOperation = false,
+  ): Promise<void> {
+    await this.handleHooks('after.bulkDelete', null, data, req);
+
+    const parentAuditId = await Noco.ncAudit.genNanoid(MetaTable.AUDIT);
+
+    // disable external source audit in cloud
+    if (await this.isDataAuditEnabled()) {
+      await Audit.insert(
+        await generateAuditV1Payload<DataBulkDeletePayload>(
+          AuditV1OperationTypes.DATA_BULK_DELETE,
+          {
+            details: {},
+            context: {
+              ...this.context,
+              source_id: this.model.source_id,
+              fk_model_id: this.model.id,
+            },
+            req,
+            id: parentAuditId,
+          },
+        ),
+      );
+    }
+    req.ncParentAuditId = parentAuditId;
+
+    const column_meta = extractColsMetaForAudit(this.model.columns);
+
+    // disable external source audit in cloud
+    if (await this.isDataAuditEnabled()) {
+      await Audit.insert(
+        await Promise.all(
+          data?.map?.((d) =>
+            generateAuditV1Payload<DataDeletePayload>(
+              AuditV1OperationTypes.DATA_DELETE,
+              {
+                details: {
+                  data: d
+                    ? formatDataForAudit(
+                        removeBlankPropsAndMask(d, ['CreatedAt', 'UpdatedAt']),
+                        this.model.columns,
+                      )
+                    : null,
+                  column_meta,
+                },
+                context: {
+                  ...this.context,
+                  source_id: this.model.source_id,
+                  fk_model_id: this.model.id,
+                  row_id: this.extractPksValues(d, true),
+                },
+                req,
+              },
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   public async afterBulkUpdate(
     prevData: any,
     newData: any,
@@ -6893,83 +3854,111 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     req,
     isBulkAllOperation = false,
   ): Promise<void> {
-    let noOfUpdatedRecords = newData;
     if (!isBulkAllOperation) {
-      noOfUpdatedRecords = newData.length;
       await this.handleHooks('after.bulkUpdate', prevData, newData, req);
     }
 
-    await Audit.insert({
-      fk_workspace_id: this.model.fk_workspace_id,
-      base_id: this.model.base_id,
-      source_id: this.model.source_id,
-      fk_model_id: this.model.id,
-      op_type: AuditV1OperationTypes.DATA_BULK_UPDATE,
-      description: DOMPurify.sanitize(
-        `${noOfUpdatedRecords} ${
-          noOfUpdatedRecords > 1 ? 'records have' : 'record has'
-        } been bulk updated in ${this.model.title}`,
-      ),
-      // details: JSON.stringify(data),
-      ip: req?.clientIp,
-      user: req?.user?.email,
-    });
+    if (newData && newData.length > 0) {
+      const parentAuditId = await Noco.ncAudit.genNanoid(MetaTable.AUDIT);
+
+      // disable external source audit in cloud
+      if (await this.isDataAuditEnabled()) {
+        await Audit.insert(
+          await generateAuditV1Payload<DataBulkUpdatePayload>(
+            AuditV1OperationTypes.DATA_BULK_UPDATE,
+            {
+              details: {},
+              context: {
+                ...this.context,
+                source_id: this.model.source_id,
+                fk_model_id: this.model.id,
+              },
+              req,
+              id: parentAuditId,
+            },
+          ),
+        );
+
+        req.ncParentAuditId = parentAuditId;
+
+        await Audit.insert(
+          (
+            await Promise.all(
+              newData.map(async (d, i) => {
+                const formattedOldData = formatDataForAudit(
+                  prevData?.[i]
+                    ? formatDataForAudit(
+                        removeBlankPropsAndMask(
+                          prevData?.[i],
+                          ['CreatedAt', 'UpdatedAt'],
+                          true,
+                        ),
+                        this.model.columns,
+                      )
+                    : null,
+                  this.model.columns,
+                );
+                const formattedData = formatDataForAudit(
+                  d
+                    ? formatDataForAudit(
+                        removeBlankPropsAndMask(
+                          d,
+                          ['CreatedAt', 'UpdatedAt'],
+                          true,
+                        ),
+                        this.model.columns,
+                      )
+                    : null,
+                  this.model.columns,
+                );
+
+                const updateDiff = populateUpdatePayloadDiff({
+                  keepUnderModified: true,
+                  prev: formattedOldData,
+                  next: formattedData,
+                  exclude: extractExcludedColumnNames(this.model.columns),
+                  excludeNull: false,
+                  excludeBlanks: false,
+                  keepNested: true,
+                }) as UpdatePayload;
+
+                if (updateDiff) {
+                  return await generateAuditV1Payload<DataUpdatePayload>(
+                    AuditV1OperationTypes.DATA_UPDATE,
+                    {
+                      context: {
+                        ...this.context,
+                        source_id: this.model.source_id,
+                        fk_model_id: this.model.id,
+                        row_id: this.extractPksValues(d, true),
+                      },
+                      details: {
+                        old_data: updateDiff.previous_state,
+                        data: updateDiff.modifications,
+                        column_meta: extractColsMetaForAudit(
+                          this.model.columns.filter(
+                            (c) => c.title in updateDiff.modifications,
+                          ),
+                          d,
+                          prevData?.[i],
+                        ),
+                      },
+                      req,
+                    },
+                  );
+                } else {
+                  return [];
+                }
+              }),
+            )
+          ).flat(),
+        );
+      }
+    }
 
     await this.handleRichTextMentions(prevData, newData, req);
   }
 
-  @trace()
-  public async afterBulkDelete(
-    data: any,
-    _trx: any,
-    req,
-    isBulkAllOperation = false,
-  ): Promise<void> {
-    let noOfDeletedRecords = data;
-    if (!isBulkAllOperation) {
-      noOfDeletedRecords = data.length;
-      await this.handleHooks('after.bulkDelete', null, data, req);
-    }
-
-    await Audit.insert({
-      fk_workspace_id: this.model.fk_workspace_id,
-      base_id: this.model.base_id,
-      source_id: this.model.source_id,
-      fk_model_id: this.model.id,
-      op_type: AuditV1OperationTypes.DATA_BULK_DELETE,
-      description: DOMPurify.sanitize(
-        `${noOfDeletedRecords} ${
-          noOfDeletedRecords > 1 ? 'records have' : 'record has'
-        } been bulk deleted in ${this.model.title}`,
-      ),
-      // details: JSON.stringify(data),
-      ip: req?.clientIp,
-      user: req?.user?.email,
-    });
-  }
-
-  @trace()
-  public async afterBulkInsert(data: any[], _trx: any, req): Promise<void> {
-    await this.handleHooks('after.bulkInsert', null, data, req);
-
-    await Audit.insert({
-      fk_workspace_id: this.model.fk_workspace_id,
-      base_id: this.model.base_id,
-      source_id: this.model.source_id,
-      fk_model_id: this.model.id,
-      op_type: AuditV1OperationTypes.DATA_BULK_INSERT,
-      description: DOMPurify.sanitize(
-        `${data.length} ${
-          data.length > 1 ? 'records have' : 'record has'
-        } been bulk inserted in ${this.model.title}`,
-      ),
-      // details: JSON.stringify(data),
-      ip: req?.clientIp,
-      user: req?.user?.email,
-    });
-  }
-
-  @trace()
   public async beforeUpdate(data: any, _trx: any, req): Promise<void> {
     const ignoreWebhook = req.query?.ignoreWebhook;
     if (ignoreWebhook) {
@@ -6982,7 +3971,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  @trace()
   public async afterUpdate(
     prevData: any,
     newData: any,
@@ -6990,40 +3978,67 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     req,
     updateObj?: Record<string, any>,
   ): Promise<void> {
+    // TODO this is a temporary fix for the audit log / DOMPurify causes issue for long text
     const id = this.extractPksValues(newData);
-    let desc = `Record with ID ${id} has been updated in Table ${this.model.title}.`;
-    let details = '';
+
+    const oldData: { [key: string]: any } = {};
+    const data: { [key: string]: any } = {};
+
     if (updateObj) {
       updateObj = await this.model.mapColumnToAlias(this.context, updateObj);
 
       for (const k of Object.keys(updateObj)) {
-        const prevValue =
-          typeof prevData[k] === 'object'
-            ? JSON.stringify(prevData[k])
-            : prevData[k];
-        const newValue =
-          typeof newData[k] === 'object'
-            ? JSON.stringify(newData[k])
-            : newData[k];
-        desc += `\n`;
-        desc += `Column "${k}" got changed from "${prevValue}" to "${newValue}"`;
-        details += DOMPurify.sanitize(`<span class="">${k}</span>
-  : <span class="text-decoration-line-through red px-2 lighten-4 black--text">${prevValue}</span>
-  <span class="black--text green lighten-4 px-2">${newValue}</span>`);
+        oldData[k] = prevData[k];
+        data[k] = newData[k];
+      }
+    } else {
+      Object.assign(oldData, prevData);
+      Object.assign(data, newData);
+    }
+
+    // disable external source audit in cloud
+    if (await this.isDataAuditEnabled()) {
+      const formattedOldData = formatDataForAudit(oldData, this.model.columns);
+      const formattedData = formatDataForAudit(data, this.model.columns);
+
+      const updateDiff = populateUpdatePayloadDiff({
+        keepUnderModified: true,
+        prev: formattedOldData,
+        next: formattedData,
+        exclude: extractExcludedColumnNames(this.model.columns),
+        excludeNull: false,
+        excludeBlanks: false,
+        keepNested: true,
+      }) as UpdatePayload;
+
+      if (updateDiff) {
+        await Audit.insert(
+          await generateAuditV1Payload<DataUpdatePayload>(
+            AuditV1OperationTypes.DATA_UPDATE,
+            {
+              context: {
+                ...this.context,
+                source_id: this.model.source_id,
+                fk_model_id: this.model.id,
+                row_id: id,
+              },
+              details: {
+                old_data: updateDiff.previous_state,
+                data: updateDiff.modifications,
+                column_meta: extractColsMetaForAudit(
+                  this.model.columns.filter(
+                    (c) => c.title in updateDiff.modifications,
+                  ),
+                  data,
+                  oldData,
+                ),
+              },
+              req,
+            },
+          ),
+        );
       }
     }
-    await Audit.insert({
-      fk_workspace_id: this.model.fk_workspace_id,
-      base_id: this.model.base_id,
-      source_id: this.model.source_id,
-      fk_model_id: this.model.id,
-      row_id: id,
-      op_type: AuditV1OperationTypes.DATA_UPDATE,
-      description: DOMPurify.sanitize(desc),
-      details,
-      ip: req?.clientIp,
-      user: req?.user?.email,
-    });
 
     const ignoreWebhook = req.query?.ignoreWebhook;
     if (ignoreWebhook) {
@@ -7034,31 +4049,27 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     if (ignoreWebhook === undefined || ignoreWebhook === 'false') {
       await this.handleHooks('after.update', prevData, newData, req);
     }
+    await this.handleRichTextMentions(prevData, newData, req);
   }
 
-  @trace()
   public async beforeDelete(data: any, _trx: any, req): Promise<void> {
+    if (this.model.synced) {
+      NcError._.prohibitedSyncTableOperation({
+        modelName: this.model.title,
+        operation: 'delete',
+      });
+    }
+
     await this.handleHooks('before.delete', null, data, req);
   }
 
-  @trace()
-  public async afterDelete(data: any, _trx: any, req): Promise<void> {
-    const id = this.extractPksValues(data);
-    await Audit.insert({
-      fk_workspace_id: this.model.fk_workspace_id,
-      base_id: this.model.base_id,
-      source_id: this.model.source_id,
-      fk_model_id: this.model.id,
-      row_id: id,
-      op_type: AuditV1OperationTypes.DATA_DELETE,
-      description: DOMPurify.sanitize(
-        `Record with ID ${id} has been deleted in Table ${this.model.title}`,
-      ),
-      // details: JSON.stringify(data),
-      ip: req?.clientIp,
-      user: req?.user?.email,
-    });
-    await this.handleHooks('after.delete', null, data, req);
+  public async beforeBulkDelete(_data: any, _trx: any, _req): Promise<void> {
+    if (this.model.synced) {
+      NcError._.prohibitedSyncTableOperation({
+        modelName: this.model.title,
+        operation: 'delete',
+      });
+    }
   }
 
   protected async handleHooks(hookName, prevData, newData, req): Promise<void> {
@@ -7080,27 +4091,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
   // todo: handle composite primary key
   public extractPksValues(data: any, asString = false) {
-    // data can be still inserted without PK
-
-    // if composite primary key return an object with all the primary keys
-    if (this.model.primaryKeys.length > 1) {
-      const pkValues = {};
-      for (const pk of this.model.primaryKeys) {
-        pkValues[pk.title] = data[pk.title] ?? data[pk.column_name];
-      }
-      return asString
-        ? Object.values(pkValues)
-            .map((val) => val?.toString?.().replaceAll('_', '\\_'))
-            .join('___')
-        : pkValues;
-    } else if (this.model.primaryKey) {
-      return (
-        data[this.model.primaryKey.title] ??
-        data[this.model.primaryKey.column_name]
-      );
-    } else {
-      return 'N/A';
-    }
+    return dataWrapper(data).extractPksValue(this.model, asString);
   }
 
   protected async errorDelete(_e, _id, _trx, _cookie) {}
@@ -7108,6 +4099,13 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   async validate(
     data: Record<string, any>,
     columns?: Column[],
+    {
+      typecast,
+      allowSystemColumn,
+    }: { typecast?: boolean; allowSystemColumn?: boolean } = {
+      typecast: false,
+      allowSystemColumn: false,
+    },
   ): Promise<boolean> {
     const cols = columns || (await this.model.getColumns(this.context));
     // let cols = Object.keys(this.columns);
@@ -7124,13 +4122,47 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           );
         }
 
-        if (column.system && column.uidt !== UITypes.ForeignKey) {
+        if (
+          !allowSystemColumn &&
+          column.system &&
+          ![UITypes.ForeignKey, UITypes.Order].includes(column.uidt)
+        ) {
           NcError.badRequest(
             `Column "${column.title}" is system column and cannot be updated`,
           );
         }
+
+        if (!allowSystemColumn && column.readonly) {
+          NcError.badRequest(
+            `Column "${column.title}" is readonly column and cannot be updated`,
+          );
+        }
       }
-      await this.validateOptions(column, data);
+      try {
+        await this.validateOptions(column, data);
+      } catch (ex) {
+        if (ex instanceof OptionsNotExistsError && typecast) {
+          await Column.update(this.context, column.id, {
+            ...column,
+            colOptions: {
+              options: [
+                ...column.colOptions.options,
+                ...ex.options.map((k, index) => ({
+                  fk_column_id: column.id,
+                  title: k,
+                  color: enumColors.get(
+                    'light',
+                    (column.colOptions.options ?? []).length + index,
+                  ),
+                })),
+              ],
+            },
+          });
+        } else {
+          throw ex;
+        }
+      }
+
       // Validates the constraints on the data based on the column definitions
       this.validateConstraints(column, data);
 
@@ -7142,28 +4174,12 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       const columnTitle = column.title;
       if (!validate) continue;
 
-      const { func, msg } = validate;
-      for (let j = 0; j < func.length; ++j) {
-        const fn =
-          typeof func[j] === 'string'
-            ? customValidators[func[j]]
-              ? customValidators[func[j]]
-              : Validator[func[j]]
-            : func[j];
-        const columnValue = data?.[cn] || data?.[columnTitle];
-        const arg =
-          typeof func[j] === 'string' ? columnValue + '' : columnValue;
-        if (
-          ![null, undefined, ''].includes(columnValue) &&
-          !(fn.constructor.name === 'AsyncFunction' ? await fn(arg) : fn(arg))
-        ) {
-          NcError.badRequest(
-            msg[j]
-              .replace(/\{VALUE}/g, columnValue)
-              .replace(/\{cn}/g, columnTitle),
-          );
-        }
-      }
+      await validateFuncOnColumn({
+        value: data?.[cn] ?? data?.[columnTitle] ?? data?.[column.id],
+        column,
+        apiVersion: this.context.api_version,
+        customValidators: customValidators as any,
+      });
     }
     return true;
   }
@@ -7199,82 +4215,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       .max(`${orderColumn.column_name} as max_order`)
       .first();
 
-    const order = orderQuery ? +orderQuery['max_order'] || 0 : 0;
+    const order = new BigNumber(orderQuery ? orderQuery['max_order'] || 0 : 0);
 
-    return new BigNumber(order + ORDER_STEP_INCREMENT);
-  }
-
-  async getUniqueOrdersBeforeItem(beforeRowId: string, count: number): Promise<BigNumber[]> {
-    const orderColumn = this.model.columns.find(
-      (c) => c.uidt === UITypes.Order,
-    );
-
-    if (!orderColumn) {
-      return [];
-    }
-
-    if (!beforeRowId) {
-      // If no beforeRowId, get the highest order
-      const highestOrder = await this.getHighestOrderInTable();
-      return [highestOrder];
-    }
-
-    // Get the order of the beforeRowId
-    const beforeRow = await this.readByPk(
-      beforeRowId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: true },
-    );
-
-    if (!beforeRow) {
-      const highestOrder = await this.getHighestOrderInTable();
-      return [highestOrder];
-    }
-
-    const beforeOrder = new BigNumber(beforeRow[orderColumn.column_name] || 0);
-
-    // Return order values before the beforeRowId
-    const orders: BigNumber[] = [];
-    for (let i = 1; i <= count; i++) {
-      orders.push(beforeOrder.minus(i));
-    }
-
-    return orders;
-  }
-
-  async moveRecord({
-    rowId,
-    beforeRowId,
-    cookie,
-  }: {
-    rowId: string;
-    beforeRowId: string;
-    cookie?: { user?: any };
-  }) {
-    const columns = await this.model.getColumns(this.context);
-
-    const row = await this.readByPk(
-      rowId,
-      false,
-      {},
-      { ignoreView: true, getHiddenColumn: true },
-    );
-
-    if (!row) {
-      NcError.recordNotFound(rowId);
-    }
-
-    const newRecordOrder = (
-      await this.getUniqueOrdersBeforeItem(beforeRowId, 1)
-    )[0];
-
-    return await this.dbDriver(this.tnPath)
-      .update({
-        [columns.find((c) => c.uidt === UITypes.Order).column_name]:
-          newRecordOrder.toString(),
-      })
-      .where(await this._wherePk(rowId));
+    return order.plus(ORDER_STEP_INCREMENT);
   }
 
   // method for validating otpions if column is single/multi select
@@ -7307,20 +4250,32 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           selectOptionsMeta?.options?.map((opt) => opt.title) || [],
       );
 
-    // if multi select, then split the values
-    const columnValueArr =
-      column.uidt === UITypes.MultiSelect
-        ? columnValue.split(',')
-        : [columnValue];
+    let columnValueArr: any[];
+
+    // if multi select, then split the values if it is not an array
+    if (column.uidt === UITypes.MultiSelect) {
+      if (Array.isArray(columnValue)) {
+        columnValueArr = columnValue;
+      } else {
+        columnValueArr = `${columnValue}`.split(',').map((val) => val.trim());
+      }
+    } else {
+      columnValueArr = [columnValue];
+    }
+
+    const notExistedOptions: any[] = [];
     for (let j = 0; j < columnValueArr.length; ++j) {
       const val = columnValueArr[j];
       if (!options.includes(val) && !options.includes(`'${val}'`)) {
-        NcError.badRequest(
-          `Invalid option "${val}" provided for column "${columnTitle}". Valid options are "${options.join(
-            ', ',
-          )}"`,
-        );
+        notExistedOptions.push(val);
       }
+    }
+    if (notExistedOptions.length > 0) {
+      NcError.optionsNotExists({
+        columnTitle,
+        validOptions: options,
+        options: notExistedOptions,
+      });
     }
   }
 
@@ -7376,7 +4331,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       req: cookie,
     });
 
-      await Promise.allSettled(
+    await Promise.allSettled(
       relationManager.getAuditUpdateObj(cookie).map((updateObj) => {
         if (updateObj.opSubType === AuditOperationSubTypes.LINK_RECORD) {
           this.afterAddChild({
@@ -7412,11 +4367,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
   public async afterAddChild({
     columnTitle,
     columnId,
-    refColumnTitle,
     rowId,
     refRowId,
     req,
@@ -7432,29 +4385,209 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     rowId: unknown;
     refRowId: unknown;
     req: NcRequest;
-    model?: Model;
-    refModel?: Model;
+    model: Model;
+    refModel: Model;
     displayValue: unknown;
     refDisplayValue: unknown;
     type: RelationTypes;
   }): Promise<void> {
-    await Audit.insert({
-      fk_workspace_id: model.fk_workspace_id,
-      base_id: model.base_id,
-      source_id: model.source_id,
-      fk_model_id: model.id,
-      op_type: AuditV1OperationTypes.DATA_LINK,
-      row_id: rowId as string,
-      description: DOMPurify.sanitize(
-        `Record [id:${refRowId}] has been linked with record [id:${rowId}] in ${model.title}`,
+    // disable external source audit in cloud
+    if (!(await this.isDataAuditEnabled())) {
+      return;
+    }
+
+    if (!refDisplayValue) {
+      refDisplayValue = await this.readByPkFromModel(
+        refModel,
+        undefined,
+        true,
+        refRowId,
+        false,
+        {},
+        { ignoreView: true, getHiddenColumn: true, extractOnlyPrimaries: true },
+      );
+    }
+
+    if (!displayValue) {
+      displayValue = await this.readByPkFromModel(
+        model,
+        undefined,
+        true,
+        rowId,
+        false,
+        {},
+        { ignoreView: true, getHiddenColumn: true, extractOnlyPrimaries: true },
+      );
+    }
+
+    await Audit.insert(
+      await generateAuditV1Payload<DataLinkPayload>(
+        AuditV1OperationTypes.DATA_LINK,
+        {
+          context: {
+            ...this.context,
+            source_id: model.source_id,
+            fk_model_id: model.id,
+            row_id: this.extractPksValues(rowId, true) as string,
+          },
+          details: {
+            table_title: model.title,
+            ref_table_title: refModel.title,
+            link_field_title: columnTitle,
+            link_field_id: columnId,
+            row_id: rowId,
+            ref_row_id: refRowId,
+            display_value: displayValue,
+            ref_display_value: refDisplayValue,
+            type,
+          },
+          req,
+        },
       ),
-      details: DOMPurify.sanitize(`<span class="">${columnTitle}</span>
-      : <span class="black--text green lighten-4 px-2">${
-        refDisplayValue ?? null
-      }</span>`),
-      ip: req?.clientIp,
-      user: req?.user?.email,
+    );
+  }
+
+  async afterAddOrRemoveChild(
+    commonAuditObj: {
+      opType: AuditV1OperationTypes;
+      model: Model;
+      refModel: Model;
+      columnTitle: string;
+      columnId: string;
+      refColumnTitle: string;
+      refColumnId: string;
+      req: NcRequest;
+    },
+    auditObjs: Array<{
+      rowId: unknown;
+      refRowId: unknown;
+      displayValue?: unknown;
+      refDisplayValue?: unknown;
+      type: RelationTypes;
+    }>,
+  ): Promise<void> {
+    if (!(await this.isDataAuditEnabled())) {
+      return;
+    }
+
+    const { opType, model, refModel, columnTitle, columnId, req } =
+      commonAuditObj;
+
+    const context = {
+      ...this.context,
+      base_id: model.base_id,
+    };
+
+    const refContext = {
+      ...this.context,
+      base_id: refModel.base_id,
+    };
+
+    // populate missing display values
+    const refBaseModel = await Model.getBaseModelSQL(refContext, {
+      model: refModel,
+      dbDriver: this.dbDriver,
     });
+
+    await model.getColumns(context);
+    await refModel.getColumns(refContext);
+
+    const missingDisplayValues = auditObjs.filter(
+      (auditObj) => !auditObj.displayValue,
+    );
+
+    const missingRefDisplayValues = auditObjs.filter(
+      (auditObj) => !auditObj.refDisplayValue,
+    );
+
+    const displayValueColumn = model.displayValue;
+    const refDisplayValueColumn = refModel.displayValue;
+
+    const displayValueMap = new Map<string, string>();
+    const refDisplayValueMap = new Map<string, string>();
+
+    if (missingDisplayValues.length > 0) {
+      for (let i = 0; i < missingDisplayValues.length; i += 100) {
+        const chunk = missingDisplayValues.slice(i * 100, (i + 1) * 100);
+
+        const displayValues = await this.list(
+          {
+            pks: chunk.map((auditObj) => auditObj.rowId).join(','),
+          },
+          {
+            limitOverride: chunk.length,
+            ignoreViewFilterAndSort: true,
+          },
+        );
+
+        for (const displayValue of displayValues) {
+          const pk = this.extractPksValues(displayValue, true);
+
+          displayValueMap.set(pk, displayValue[displayValueColumn.title]);
+        }
+      }
+    }
+
+    if (missingRefDisplayValues.length > 0) {
+      for (let i = 0; i < missingRefDisplayValues.length; i += 100) {
+        const chunk = missingRefDisplayValues.slice(i * 100, (i + 1) * 100);
+
+        const refDisplayValues = await refBaseModel.list(
+          {
+            pks: chunk.map((auditObj) => auditObj.refRowId).join(','),
+          },
+          {
+            limitOverride: chunk.length,
+            ignoreViewFilterAndSort: true,
+          },
+        );
+
+        for (const refDisplayValue of refDisplayValues) {
+          const pk = refBaseModel.extractPksValues(refDisplayValue, true);
+
+          refDisplayValueMap.set(
+            pk,
+            refDisplayValue[refDisplayValueColumn.title],
+          );
+        }
+      }
+    }
+
+    const auditPayloads = await Promise.all(
+      auditObjs.map(async (auditObj) => {
+        if (!auditObj.refDisplayValue) {
+          auditObj.refDisplayValue = refDisplayValueMap.get(
+            `${auditObj.refRowId}`,
+          );
+        }
+        if (!auditObj.displayValue) {
+          auditObj.displayValue = displayValueMap.get(`${auditObj.rowId}`);
+        }
+        // Build and return the audit payload.
+        return generateAuditV1Payload<DataLinkPayload>(opType, {
+          context: {
+            ...context,
+            source_id: model.source_id,
+            fk_model_id: model.id,
+            row_id: this.extractPksValues(auditObj.rowId, true) as string,
+          },
+          details: {
+            table_title: model.title,
+            ref_table_title: refModel.title,
+            link_field_title: columnTitle,
+            link_field_id: columnId,
+            row_id: auditObj.rowId,
+            ref_row_id: auditObj.refRowId,
+            display_value: auditObj.displayValue,
+            ref_display_value: auditObj.refDisplayValue,
+            type: auditObj.type,
+          },
+          req,
+        });
+      }),
+    );
+
+    await Audit.insert(auditPayloads);
   }
 
   async removeChild({
@@ -7512,11 +4645,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
   public async afterRemoveChild({
     columnTitle,
     columnId,
-    refColumnTitle,
     rowId,
     refRowId,
     req,
@@ -7532,8 +4663,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     rowId: unknown;
     refRowId: unknown;
     req: NcRequest;
-    model?: Model;
-    refModel?: Model;
+    model: Model;
+    refModel: Model;
     displayValue: unknown;
     refDisplayValue: unknown;
     type: RelationTypes;
@@ -7572,8 +4703,8 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         {
           context: {
             ...this.context,
-      source_id: model.source_id,
-      fk_model_id: model.id,
+            source_id: model.source_id,
+            fk_model_id: model.id,
             row_id: this.extractPksValues(rowId, true) as string,
           },
           details: {
@@ -7581,7 +4712,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             ref_table_title: refModel.title,
             link_field_title: columnTitle,
             link_field_id: columnId,
-      row_id: rowId,
+            row_id: rowId,
             ref_row_id: refRowId,
             display_value: displayValue,
             ref_display_value: refDisplayValue,
@@ -7593,7 +4724,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
-  @trace()
   public async groupedList(
     args: {
       groupColumnId: string;
@@ -7783,6 +4913,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       throw e;
     }
   }
+
   public async groupedListCount(
     args: {
       groupColumnId: string;
@@ -7813,7 +4944,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       this.context,
       columns,
     );
-    const { filters: filterObj } = extractFilterFromXwhere(this.context, args.where, aliasColObjMap);
+    const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
+      args.where,
+      aliasColObjMap,
+    );
     // todo: replace with view id
 
     if (!args.ignoreViewFilterAndSort && this.viewId) {
@@ -7873,7 +5008,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return await this.execAndParse(qb);
   }
 
-  @trace()
   public async execAndGetRows(query: string, trx?: Knex | CustomKnex) {
     trx = trx || this.dbDriver;
 
@@ -7881,9 +5015,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     if (this.isPg || this.isSnowflake) {
       return (await trx.raw(query))?.rows;
-    } else if (!this.isMssql && /^(\(|)select/i.test(query)) {
+    } else if (SELECT_REGEX.test(query)) {
       return await trx.from(trx.raw(query).wrap('(', ') __nc_alias'));
-    } else if (this.isMySQL && /^(\(|)insert/i.test(query)) {
+    } else if (this.isMySQL && INSERT_REGEX.test(query)) {
       const res = await trx.raw(query);
       if (res && res[0] && res[0].insertId) {
         return res[0].insertId;
@@ -7894,7 +5028,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  @trace()
   public async execAndParse(
     qb: Knex.QueryBuilder | string,
     dependencyColumns?: Column[],
@@ -7907,7 +5040,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       raw?: boolean; // alias for skipDateConversion and skipAttachmentConversion
       first?: boolean;
       bulkAggregate?: boolean;
-      ignoreCache?: boolean;
+      apiVersion?: NcApiVersion;
     } = {
       skipDateConversion: false,
       skipAttachmentConversion: false,
@@ -7917,7 +5050,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       raw: false,
       first: false,
       bulkAggregate: false,
-      ignoreCache: false,
+      apiVersion: NcApiVersion.V2,
     },
   ) {
     if (options.raw) {
@@ -7942,7 +5075,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     // update attachment fields
     if (!options.skipAttachmentConversion) {
-      data = await this.convertAttachmentType(data, dependencyColumns, options.ignoreCache ?? false);
+      data = await this.convertAttachmentType(data, dependencyColumns);
     }
 
     // update date time fields
@@ -7952,11 +5085,24 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
     // update user fields
     if (!options.skipUserConversion) {
-      data = await this.convertUserFormat(data, dependencyColumns);
+      data = await this.convertUserFormat(
+        data,
+        dependencyColumns,
+        options?.apiVersion,
+      );
     }
 
     if (!options.skipJsonConversion) {
       data = await this.convertJsonTypes(data, dependencyColumns);
+    }
+    if (options.apiVersion === NcApiVersion.V3) {
+      data = await this.convertMultiSelectTypes(data, dependencyColumns);
+      await FieldHandler.fromBaseModel(this).parseDataDbValue({
+        data,
+        options: {
+          additionalColumns: dependencyColumns,
+        },
+      });
     }
 
     if (!options.skipSubstitutingColumnIds) {
@@ -7973,9 +5119,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
-  public sanitizeQuery(query: string | string[]) {
+  sanitizeQuery(query: string | string[]) {
     const fn = (q: string) => {
-      if (!this.isPg && !this.isMssql && !this.isSnowflake) {
+      if (!this.isPg && !this.isSnowflake) {
         return unsanitize(q);
       } else {
         return sanitize(q);
@@ -7985,7 +5131,9 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   async runOps(ops: Promise<string>[], trx = this.dbDriver) {
-    const queries = await Promise.all(ops);
+    const queries = (await Promise.all(ops)).filter((query) =>
+      ncIsStringHasValue(query),
+    );
     for (const query of queries) {
       await trx.raw(query);
     }
@@ -8003,10 +5151,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
 
     const idToAliasMap: Record<string, string> = {};
-    const idToAliasPromiseMap: Record<string, Promise<string>> = {};
     const ltarMap: Record<string, boolean> = {};
+    const missingColumnIds = new Set<string>();
 
-    modelColumns.forEach((col) => {
+    // Build initial maps and collect missing column IDs
+    for (let col of modelColumns) {
       if (aliasColumns && col.id in aliasColumns) {
         aliasColumns[col.id].id = col.id;
         aliasColumns[col.id].title = col.title;
@@ -8014,172 +5163,240 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       }
 
       idToAliasMap[col.id] = col.title;
-      if (col.uidt === UITypes.LinkToAnotherRecord) {
-        ltarMap[col.id] = true;
-        const linkData = Object.values(data).find(
-          (d) => d[col.id] && Object.keys(d[col.id]),
-        );
-        if (linkData) {
-          if (typeof linkData[col.id] === 'object') {
-            for (const k of Object.keys(
-              Array.isArray(linkData[col.id])
-                ? linkData[col.id][0] || {}
-                : linkData[col.id],
-            )) {
-              const linkAlias = idToAliasMap[k];
-              if (!linkAlias) {
-                idToAliasPromiseMap[k] = Column.get(this.context, {
-                  colId: k,
-                })
-                  .then((col) => {
-                    return col?.title;
-                  })
-                  .catch((e) => {
-                    return Promise.resolve(e);
-                  });
-              }
-            }
-          } else {
-            // Has Many BT
-            const linkAlias = idToAliasMap[col.id];
-            if (!linkAlias) {
-              idToAliasPromiseMap[col.id] = Column.get(this.context, {
-                colId: col.id,
-              })
-                .then((col) => {
-                  return col?.title;
-                })
-                .catch((e) => {
-                  return Promise.resolve(e);
-                });
-            }
+
+      const isLtarColumn = [
+        UITypes.LinkToAnotherRecord,
+        UITypes.Lookup,
+      ].includes(col.uidt);
+      if (isLtarColumn) {
+        if (col.uidt === UITypes.Lookup) {
+          const nestedCol = await this.getNestedColumn(col);
+          if (nestedCol?.uidt !== UITypes.LinkToAnotherRecord) {
+            ltarMap[col.id] = false;
+            continue;
           }
+        }
+
+        ltarMap[col.id] = true;
+
+        // Find any data that contains this column and collect missing column IDs
+        const linkData = data.find(
+          (d) =>
+            d[col.id] &&
+            ((!Array.isArray(d[col.id]) && Object.keys(d[col.id]).length > 0) ||
+              (Array.isArray(d[col.id]) && d[col.id].length > 0)),
+        );
+
+        if (linkData && typeof linkData[col.id] === 'object') {
+          const sampleData = Array.isArray(linkData[col.id])
+            ? linkData[col.id][0] || {}
+            : linkData[col.id];
+
+          Object.keys(sampleData).forEach((k) => {
+            if (!idToAliasMap[k]) {
+              missingColumnIds.add(k);
+            }
+          });
         }
       } else {
         ltarMap[col.id] = false;
       }
-    });
-
-    for (const k of Object.keys(idToAliasPromiseMap)) {
-      idToAliasMap[k] = await idToAliasPromiseMap[k];
-      if ((idToAliasMap[k] as unknown) instanceof Error) {
-        throw idToAliasMap[k];
-      }
     }
 
-    data.forEach((item) => {
-      Object.entries(item).forEach(([key, value]) => {
-        const alias = idToAliasMap[key];
-        if (alias) {
-          if (ltarMap[key]) {
-            if (value && typeof value === 'object') {
-              const tempObj = Array.isArray(value)
-                ? value.map((arrVal) => transformObject(arrVal, idToAliasMap))
-                : transformObject(value, idToAliasMap);
-              item[alias] = tempObj;
-              item[alias] = tempObj;
-            } else {
-              item[alias] = value;
-            }
-          } else {
-            item[alias] = value;
-          }
-          delete item[key];
+    // Fetch all missing column aliases concurrently
+    if (missingColumnIds.size > 0) {
+      const columnPromises = Array.from(missingColumnIds).map(async (k) => {
+        try {
+          const col = await Column.get(this.context, { colId: k });
+          return { id: k, title: col?.title };
+        } catch (e) {
+          // ignore error to avoid breaking the entire response
+          return {};
         }
       });
-    });
 
-    return data;
+      const columnResults = await Promise.all(columnPromises);
+
+      // Update the alias map with fetched columns
+      columnResults.forEach(({ id, title }) => {
+        if (title) {
+          idToAliasMap[id] = title;
+        }
+      });
+    }
+
+    // Transform data in a single pass
+    return data.map((item) => {
+      const transformedItem = {};
+
+      Object.entries(item).forEach(([key, value]) => {
+        const alias = idToAliasMap[key];
+        const targetKey = alias || key;
+
+        if (alias && ltarMap[key]) {
+          // Handle LTAR/Lookup columns
+          if (
+            Array.isArray(value) &&
+            value.length > 0 &&
+            value[0] &&
+            typeof value[0] === 'object' &&
+            !Array.isArray(value[0])
+          ) {
+            // Transform array of objects
+            transformedItem[targetKey] = value.map((arrVal) => {
+              if (!arrVal || typeof arrVal !== 'object') return arrVal;
+              return transformObjectKeys(arrVal, idToAliasMap);
+            });
+          } else if (
+            value &&
+            typeof value === 'object' &&
+            !Array.isArray(value)
+          ) {
+            // Transform non-array objects
+            transformedItem[targetKey] = transformObjectKeys(
+              value,
+              idToAliasMap,
+            );
+          } else {
+            // Directly assign arrays of primitives or primitive values
+            transformedItem[targetKey] = value;
+          }
+        } else {
+          // Non-LTAR/Lookup columns or unmapped columns: direct assignment
+          transformedItem[targetKey] = value;
+        }
+      });
+
+      return transformedItem;
+    });
   }
 
   protected async convertUserFormat(
     data: Record<string, any>,
     dependencyColumns?: Column[],
+    apiVersion?: NcApiVersion,
   ) {
     // user is stored as id within the database
     // convertUserFormat is used to convert the response in id to user object in API response
-    if (data) {
-      let userColumns = [];
+    if (!data) {
+      return data;
+    }
 
-      const columns = this.model?.columns.concat(dependencyColumns ?? []);
+    const columns = this.model?.columns.concat(dependencyColumns ?? []);
 
-      for (const col of columns) {
-        if (col.uidt === UITypes.Lookup) {
-          if (
-            [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(
-              (await this.getNestedColumn(col))?.uidt as UITypes,
-            )
-          ) {
-            userColumns.push(col);
-          }
-        } else {
-          if (
-            [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(
-              col.uidt,
-            )
-          ) {
-            userColumns.push(col);
-          }
-        }
-      }
+    // Separate columns by type for more efficient processing
+    const directUserColumns = [];
+    const lookupColumns = [];
 
-      // filter user columns that are not present in data
-      if (userColumns.length) {
-        if (Array.isArray(data)) {
-          const row = data[0];
-          if (row) {
-            userColumns = userColumns.filter((col) => col.id in row);
-          }
-        } else {
-          userColumns = userColumns.filter((col) => col.id in data);
-        }
-      }
-
-      // process user columns that are present in data
-      if (userColumns.length) {
-        const baseUsers = await BaseUser.getUsersList(this.context, {
-          base_id: this.model.base_id,
-        });
-
-        await PresignedUrl.signMetaIconImage(baseUsers);
-
-        if (Array.isArray(data)) {
-          data = await Promise.all(
-            data.map((d) => this._convertUserFormat(userColumns, baseUsers, d)),
-          );
-        } else {
-          data = await this._convertUserFormat(userColumns, baseUsers, data);
-        }
+    for (const col of columns) {
+      if (col.uidt === UITypes.Lookup) {
+        lookupColumns.push(col);
+      } else if (
+        [UITypes.User, UITypes.CreatedBy, UITypes.LastModifiedBy].includes(
+          col.uidt,
+        )
+      ) {
+        directUserColumns.push(col);
       }
     }
-    return data;
+
+    // Process lookup columns in parallel to find user columns
+    const lookupUserColumns =
+      lookupColumns.length > 0
+        ? await Promise.all(
+            lookupColumns.map(async (col) => {
+              try {
+                const nestedCol = await this.getNestedColumn(col);
+                return [
+                  UITypes.User,
+                  UITypes.CreatedBy,
+                  UITypes.LastModifiedBy,
+                ].includes(nestedCol?.uidt as UITypes)
+                  ? col
+                  : null;
+              } catch {
+                return null;
+              }
+            }),
+          ).then((results) => results.filter(Boolean))
+        : [];
+
+    const allUserColumns = [...directUserColumns, ...lookupUserColumns];
+
+    if (!allUserColumns.length) {
+      return data;
+    }
+
+    // Fetch users and sign meta icons in parallel
+    const baseUsers = await BaseUser.getUsersList(this.context, {
+      base_id: this.model.base_id,
+      include_internal_user: true,
+    });
+
+    await PresignedUrl.signMetaIconImage(baseUsers);
+
+    if (Array.isArray(data)) {
+      const userMap = new Map(baseUsers.map((user) => [user.id, user]));
+      return Promise.all(
+        data.map((d) =>
+          this._convertUserFormat(
+            allUserColumns,
+            baseUsers,
+            d,
+            apiVersion,
+            userMap,
+          ),
+        ),
+      );
+    } else {
+      return this._convertUserFormat(
+        allUserColumns,
+        baseUsers,
+        data,
+        apiVersion,
+      );
+    }
   }
 
   protected _convertUserFormat(
     userColumns: Column[],
     baseUsers: Partial<User>[],
     d: Record<string, any>,
+    apiVersion?: NcApiVersion,
+    userMapInit?: Map<string, Partial<User> & BaseUser>,
   ) {
     try {
-      if (d) {
+      if (d && baseUsers.length) {
+        const userMap =
+          userMapInit || new Map(baseUsers.map((user) => [user.id, user]));
+
         const availableUserColumns = userColumns.filter(
           (col) => d[col.id] && d[col.id].length,
         );
+
         for (const col of availableUserColumns) {
           d[col.id] = d[col.id].split(',');
 
           d[col.id] = d[col.id].map((fid) => {
-            const { id, email, display_name, meta } = baseUsers.find(
-              (u) => u.id === fid,
-            );
+            const user = userMap.get(fid);
+            if (!user) {
+              return { id: fid, email: null, display_name: null, meta: null };
+            }
+
+            const { id, email, display_name, meta } = user;
+
+            let metaObj: any;
+            if (apiVersion !== NcApiVersion.V3) {
+              metaObj = ncIsObject(meta)
+                ? extractProps(meta, ['icon', 'iconType'])
+                : null;
+            }
 
             return {
               id,
               email,
               display_name: display_name?.length ? display_name : null,
-              meta: ncIsObject(meta)
-                ? extractProps(meta, ['icon', 'iconType'])
-                : null,
+              meta: metaObj,
             };
           });
 
@@ -8193,195 +5410,156 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
-  @trace()
   protected async _convertAttachmentType(
     attachmentColumns: Record<string, any>[],
     d: Record<string, any>,
-    ignoreCache?: boolean,
   ) {
-    var ignoreCache = ignoreCache ?? false
     try {
-      if (d) {
-        const promises = [];
-        for (const col of attachmentColumns) {
-          if (d[col.id] && typeof d[col.id] === 'string') {
+      if (!d || !attachmentColumns.length) {
+        return d;
+      }
+
+      const allAttachments = [];
+      const allThumbnails = [];
+
+      // First pass: parse JSON and collect all attachment instances (no deduplication)
+      for (const col of attachmentColumns) {
+        if (!d[col.id]) continue;
+
+        // Parse JSON if needed
+        if (typeof d[col.id] === 'string') {
+          try {
             d[col.id] = JSON.parse(d[col.id]);
+          } catch {
+            continue;
+          }
+        }
+
+        if (!Array.isArray(d[col.id]) || !d[col.id].length) continue;
+
+        // Process each attachment instance individually
+        for (let i = 0; i < d[col.id].length; i++) {
+          const item = d[col.id][i];
+
+          if (typeof item === 'string') {
+            try {
+              d[col.id][i] = JSON.parse(item);
+            } catch {
+              continue;
+            }
           }
 
-          if (d[col.id]?.length) {
-            for (let i = 0; i < d[col.id].length; i++) {
-              if (typeof d[col.id][i] === 'string') {
-                d[col.id][i] = JSON.parse(d[col.id][i]);
-              }
+          const attachment = d[col.id][i];
 
-              const attachment = d[col.id][i];
+          if (attachment.id?.startsWith('temp_')) {
+            // Skip temporary attachments
+            continue;
+          }
 
-              // we expect array of array of attachments in case of lookup
-              if (Array.isArray(attachment)) {
-                for (const lookedUpAttachment of attachment) {
-                  if (lookedUpAttachment?.path) {
-                    promises.push(
-                      PresignedUrl.signAttachment({
-                        attachment: lookedUpAttachment,
-                        filename: lookedUpAttachment.title,
-                      }),
-                    );
-
-                    if (!lookedUpAttachment.mimetype?.startsWith('image/')) {
-                      continue;
-                    }
-
-                    lookedUpAttachment.thumbnails = {
-                      tiny: {},
-                      small: {},
-                      card_cover: {},
-                    };
-
-                    const thumbnailPath = `thumbnails/${lookedUpAttachment.path.replace(
-                      /^download[/\\]/i,
-                      '',
-                    )}`;
-
-                    for (const key of Object.keys(
-                      lookedUpAttachment.thumbnails,
-                    )) {
-                      promises.push(
-                        PresignedUrl.signAttachment(
-                          {
-                            attachment: {
-                              ...lookedUpAttachment,
-                              path: `${thumbnailPath}/${key}.jpg`,
-                            },
-                            filename: lookedUpAttachment.title,
-                            mimetype: 'image/jpeg',
-                            nestedKeys: ['thumbnails', key],
-                            ignoreCache: ignoreCache
-                          })
-                      );
-                    }
-                  } else if (lookedUpAttachment?.url) {
-                    promises.push(
-                      PresignedUrl.signAttachment({
-                        attachment: lookedUpAttachment,
-                        filename: lookedUpAttachment.title,
-                        ignoreCache: ignoreCache
-                      }),
-                    );
-
-                    if (!lookedUpAttachment.mimetype?.startsWith('image/')) {
-                      continue;
-                    }
-
-                    const thumbnailUrl = lookedUpAttachment.url.replace(
-                      'nc/uploads',
-                      'nc/thumbnails',
-                    );
-
-                    lookedUpAttachment.thumbnails = {
-                      tiny: {},
-                      small: {},
-                      card_cover: {},
-                    };
-
-                    for (const key of Object.keys(
-                      lookedUpAttachment.thumbnails,
-                    )) {
-                      promises.push(
-                        PresignedUrl.signAttachment({
-                          attachment: {
-                            ...lookedUpAttachment,
-                            url: `${thumbnailUrl}/${key}.jpg`,
-                          },
-                          filename: lookedUpAttachment.title,
-                          mimetype: 'image/jpeg',
-                          nestedKeys: ['thumbnails', key],
-                        }),
-                      );
-                    }
-                  }
-                }
-              } else {
-                if (attachment?.path) {
-                  promises.push(
-                    PresignedUrl.signAttachment({
-                      attachment,
-                      filename: attachment.title,
-                      ignoreCache: ignoreCache
-                    }),
-                  );
-
-                  if (!attachment.mimetype?.startsWith('image/')) {
-                    continue;
-                  }
-
-                  const thumbnailPath = `thumbnails/${attachment.path.replace(
-                    /^download[/\\]/i,
-                    '',
-                  )}`;
-
-                  attachment.thumbnails = {
-                    tiny: {},
-                    small: {},
-                    card_cover: {},
-                  };
-
-                  for (const key of Object.keys(attachment.thumbnails)) {
-                    promises.push(
-                      PresignedUrl.signAttachment({
-                        attachment: {
-                          ...attachment,
-                          path: `${thumbnailPath}/${key}.jpg`,
-                        },
-                        filename: attachment.title,
-                        mimetype: 'image/jpeg',
-                        nestedKeys: ['thumbnails', key],
-                        ignoreCache: ignoreCache
-                      }),
-                    );
-                  }
-                } else if (attachment?.url) {
-                  promises.push(
-                    PresignedUrl.signAttachment({
-                      attachment,
-                      filename: attachment.title,
-                      ignoreCache: ignoreCache
-                    }),
-                  );
-
-                  const thumbhailUrl = attachment.url.replace(
-                    'nc/uploads',
-                    'nc/thumbnails',
-                  );
-
-                  attachment.thumbnails = {
-                    tiny: {},
-                    small: {},
-                    card_cover: {},
-                  };
-
-                  for (const key of Object.keys(attachment.thumbnails)) {
-                    promises.push(
-                      PresignedUrl.signAttachment({
-                        attachment: {
-                          ...attachment,
-                          url: `${thumbhailUrl}/${key}.jpg`,
-                        },
-                        filename: attachment.title,
-                        mimetype: 'image/jpeg',
-                        nestedKeys: ['thumbnails', key],
-                        ignoreCache: ignoreCache
-                      }),
-                    );
-                  }
-                }
-              }
+          // Handle array of arrays (lookup case)
+          for (const lookedUpAttachment of Array.isArray(attachment)
+            ? attachment
+            : [attachment]) {
+            const thumbnails =
+              this.prepareAttachmentForSigning(lookedUpAttachment);
+            if (
+              lookedUpAttachment &&
+              (lookedUpAttachment.path || lookedUpAttachment.url)
+            ) {
+              allAttachments.push(lookedUpAttachment);
+              allThumbnails.push(...thumbnails);
             }
           }
         }
-        await Promise.all(promises);
       }
-    } catch {}
+
+      await processConcurrently(
+        allAttachments,
+        async (item) => {
+          try {
+            await PresignedUrl.signAttachment({
+              attachment: item,
+              filename: item.title,
+            });
+          } catch (e) {}
+        },
+        15,
+      );
+
+      await processConcurrently(
+        allThumbnails,
+        async ({ attachment, thumbnailKey, thumbnailPath }) => {
+          try {
+            await PresignedUrl.signAttachment({
+              attachment: {
+                ...attachment,
+                ...(attachment.path
+                  ? { path: thumbnailPath }
+                  : { url: thumbnailPath }),
+              },
+              filename: attachment.title,
+              mimetype: 'image/jpeg',
+              nestedKeys: ['thumbnails', thumbnailKey],
+            });
+          } catch (e) {}
+        },
+        15,
+      );
+    } catch (error) {
+      // Log error but don't throw to avoid breaking the entire response
+      console.warn('Error in _convertAttachmentType:', error.message);
+    }
+
     return d;
+  }
+
+  private prepareAttachmentForSigning(attachment: any) {
+    const thumbnails = [];
+
+    if (!attachment || (!attachment.path && !attachment.url)) {
+      return thumbnails;
+    }
+
+    // Skip data URLs
+    if (attachment.url?.startsWith('data:')) {
+      return thumbnails;
+    }
+
+    // Process thumbnails for images
+    if (supportsThumbnails(attachment)) {
+      attachment.thumbnails = {
+        tiny: {},
+        small: {},
+        card_cover: {},
+      };
+
+      const thumbnailKeys = Object.keys(attachment.thumbnails);
+
+      for (const key of thumbnailKeys) {
+        let thumbnailPath: string;
+
+        if (attachment.path) {
+          const cleanPath = attachment.path.replace(/^download[/\\]/i, '');
+          thumbnailPath = `thumbnails/${cleanPath}/${key}.jpg`;
+        } else if (attachment.url) {
+          const thumbnailUrl = attachment.url.replace(
+            'nc/uploads',
+            'nc/thumbnails',
+          );
+          thumbnailPath = `${thumbnailUrl}/${key}.jpg`;
+        }
+
+        if (thumbnailPath) {
+          thumbnails.push({
+            attachment,
+            thumbnailKey: key,
+            thumbnailPath,
+          });
+        }
+      }
+    }
+
+    return thumbnails;
   }
 
   protected async _convertJsonType(
@@ -8410,14 +5588,45 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
-  @trace()
-  public async getNestedColumn(column: Column) {
+  // this function is used to convert the response in string to array in API response
+  protected async _convertMultiSelectType(
+    multiSelectColumns: Record<string, any>[],
+    d: Record<string, any>,
+  ) {
+    try {
+      if (d) {
+        for (const col of multiSelectColumns) {
+          if (d[col.id] && typeof d[col.id] === 'string') {
+            d[col.id] = d[col.id].split(',');
+          } else if (d[col.title] && typeof d[col.title] === 'string') {
+            d[col.title] = d[col.title].split(',');
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return d;
+  }
+
+  public async getNestedColumn(column: Column, context = this.context) {
+    if (!column)
+      return {
+        uidt: UITypes.SingleLineText,
+      };
+
     if (column.uidt !== UITypes.Lookup) {
       return column;
     }
-    const colOptions = await column.getColOptions<LookupColumn>(this.context);
+    const colOptions = await column.getColOptions<LookupColumn>(context);
+    const relationColOpt = await colOptions
+      .getRelationColumn(context)
+      .then((col) => col?.getColOptions<LinkToAnotherRecordColumn>(context));
+
+    const { refContext } = relationColOpt.getRelContext(context);
     return this.getNestedColumn(
-      await colOptions?.getLookupColumn(this.context),
+      await colOptions?.getLookupColumn(refContext),
+      refContext,
     );
   }
 
@@ -8427,77 +5636,148 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   ) {
     // buttons & AI result are stringified json in Sqlite and need to be parsed
     // converJsonTypes is used to convert the response in string to object in API response
-    if (data) {
-      const jsonCols = [];
+    if (!data) {
+      return data;
+    }
 
-      const columns = this.model?.columns.concat(dependencyColumns ?? []);
+    const columns = this.model?.columns.concat(dependencyColumns ?? []);
 
-      for (const col of columns) {
-        if (col.uidt === UITypes.Lookup) {
-          const lookupNestedCol = await this.getNestedColumn(col);
+    // Separate JSON and lookup columns for efficient processing
+    const directJsonColumns = [];
+    const lookupColumns = [];
 
-          if (
-            JSON_COLUMN_TYPES.includes(lookupNestedCol.uidt) ||
-            isAIPromptCol(lookupNestedCol)
-          ) {
-            jsonCols.push(col);
-          }
-        } else {
-          if (JSON_COLUMN_TYPES.includes(col.uidt) || isAIPromptCol(col)) {
-            jsonCols.push(col);
-          }
-        }
-      }
-
-      if (jsonCols.length) {
-        if (Array.isArray(data)) {
-          data = await Promise.all(
-            data.map((d) => this._convertJsonType(jsonCols, d)),
-          );
-        } else {
-          data = await this._convertJsonType(jsonCols, data);
-        }
+    for (const col of columns) {
+      if (JSON_COLUMN_TYPES.includes(col.uidt) || isAIPromptCol(col)) {
+        directJsonColumns.push(col);
+      } else if (col.uidt === UITypes.Lookup) {
+        lookupColumns.push(col);
       }
     }
-    return data;
+
+    // Process lookup columns in parallel to find JSON columns
+    const lookupJsonColumns =
+      lookupColumns.length > 0
+        ? await Promise.all(
+            lookupColumns.map(async (col) => {
+              try {
+                const lookupNestedCol = await this.getNestedColumn(col);
+                return JSON_COLUMN_TYPES.includes(lookupNestedCol.uidt) ||
+                  isAIPromptCol(lookupNestedCol)
+                  ? col
+                  : null;
+              } catch (error) {
+                // Log error but continue processing
+                console.warn(
+                  `Error processing lookup column ${col.id}:`,
+                  error,
+                );
+                return null;
+              }
+            }),
+          ).then((results) => results.filter(Boolean))
+        : [];
+
+    const allJsonColumns = [...directJsonColumns, ...lookupJsonColumns];
+
+    if (!allJsonColumns.length) {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      return Promise.all(
+        data.map((d) => this._convertJsonType(allJsonColumns, d)),
+      );
+    } else {
+      return this._convertJsonType(allJsonColumns, data);
+    }
   }
 
-  @trace()
+  public async convertMultiSelectTypes(
+    data: Record<string, any>,
+    dependencyColumns?: Column[],
+  ) {
+    if (!data) {
+      return data;
+    }
+
+    const columns = this.model?.columns.concat(dependencyColumns ?? []);
+    const multiSelectColumns = columns.filter(
+      (col) => col.uidt === UITypes.MultiSelect,
+    );
+
+    if (!multiSelectColumns.length) {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      return Promise.all(
+        data.map((d) => this._convertMultiSelectType(multiSelectColumns, d)),
+      );
+    } else {
+      return this._convertMultiSelectType(multiSelectColumns, data);
+    }
+  }
+
   public async convertAttachmentType(
     data: Record<string, any>,
     dependencyColumns?: Column[],
-    ignoreCache?: boolean
   ) {
-    var ignoreCache = ignoreCache ?? false
     // attachment is stored in text and parse in UI
     // convertAttachmentType is used to convert the response in string to array of object in API response
-    if (data) {
-      const attachmentColumns = [];
+    if (!data) {
+      return data;
+    }
 
-      const columns = this.model?.columns.concat(dependencyColumns ?? []);
+    const columns = this.model?.columns.concat(dependencyColumns ?? []);
 
-      for (const col of columns) {
-        if (col.uidt === UITypes.Lookup) {
-          if ((await this.getNestedColumn(col))?.uidt === UITypes.Attachment) {
-            attachmentColumns.push(col);
-          }
-        } else {
-          if (col.uidt === UITypes.Attachment) {
-            attachmentColumns.push(col);
-          }
-        }
-      }
-      if (attachmentColumns.length) {
-        if (Array.isArray(data)) {
-          data = await Promise.all(
-            data.map((d) => this._convertAttachmentType(attachmentColumns, d, ignoreCache)),
-          );
-        } else {
-          data = await this._convertAttachmentType(attachmentColumns, data, ignoreCache);
-        }
+    // Separate attachment and lookup columns for efficient processing
+    const directAttachmentColumns = [];
+    const lookupColumns = [];
+
+    for (const col of columns) {
+      if (col.uidt === UITypes.Attachment) {
+        directAttachmentColumns.push(col);
+      } else if (col.uidt === UITypes.Lookup) {
+        lookupColumns.push(col);
       }
     }
-    return data;
+
+    // Process lookup columns in parallel to find attachment columns
+    const lookupAttachmentColumns =
+      lookupColumns.length > 0
+        ? await Promise.all(
+            lookupColumns.map(async (col) => {
+              try {
+                const nestedCol = await this.getNestedColumn(col);
+                return nestedCol?.uidt === UITypes.Attachment ? col : null;
+              } catch (error) {
+                // Log error but continue processing
+                console.warn(
+                  `Error processing lookup column ${col.id}:`,
+                  error,
+                );
+                return null;
+              }
+            }),
+          ).then((results) => results.filter(Boolean))
+        : [];
+
+    const allAttachmentColumns = [
+      ...directAttachmentColumns,
+      ...lookupAttachmentColumns,
+    ];
+
+    if (!allAttachmentColumns.length) {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      return Promise.all(
+        data.map((d) => this._convertAttachmentType(allAttachmentColumns, d)),
+      );
+    } else {
+      return this._convertAttachmentType(allAttachmentColumns, data);
+    }
   }
 
   // TODO(timezone): retrieve the format from the corresponding column meta
@@ -8679,36 +5959,72 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return addOrRemoveLinks(this).addLinks(params);
   }
 
-  async removeLinks({
-    cookie,
-    childIds: _childIds,
-    colId,
-    rowId,
-  }: {
+  async removeLinks(params: {
     cookie: any;
-    childIds: (string | number | Record<string, any>)[];
+    childIds: (string | number)[];
     colId: string;
     rowId: string;
   }) {
     await this.checkPermission({
       entity: PermissionEntity.FIELD,
-      entityId: colId,
+      entityId: params.colId,
       permission: PermissionKey.RECORD_FIELD_EDIT,
-      user: cookie?.user,
-      req: cookie,
+      user: params.cookie?.user,
+      req: params.cookie,
     });
 
-    // Transform childIds to ensure they are primitive values
-    const transformedChildIds = _childIds.map(childId =>
-      typeof childId === 'object' ? Object.values(childId).join('_') : childId
-    );
+    return addOrRemoveLinks(this).removeLinks(params);
+  }
 
-    return addOrRemoveLinks(this).removeLinks({
-      cookie,
-      childIds: transformedChildIds,
-      colId,
-      rowId,
-    });
+  async ooRead(
+    { colId, id }: { colId; id; apiVersion?: NcApiVersion },
+    _args: { limit?; offset?; fieldSet?: Set<string> } = {},
+  ) {
+    try {
+      await this.model.getColumns(this.context);
+
+      const relColumn = this.model.columnsById[colId];
+      if (!relColumn) {
+        NcError.get(this.context).fieldNotFound(colId);
+      }
+      const relColOptions = (await relColumn.getColOptions(
+        this.context,
+      )) as LinkToAnotherRecordColumn;
+      const relatedContext = await relColOptions.getRelContext(this.context);
+      const relatedBaseModel = await getBaseModelSqlFromModelId({
+        modelId: relColOptions.fk_related_model_id,
+        context: relatedContext.refContext,
+      });
+      const joinIds = [
+        relColOptions.fk_child_column_id,
+        relColOptions.fk_parent_column_id,
+      ];
+      const relatedColumn = (
+        await relatedBaseModel.model.getColumns(relatedBaseModel.context)
+      ).find((col) => joinIds.includes(col.id));
+
+      const row = await relatedBaseModel.execAndParse(
+        relatedBaseModel
+          .dbDriver(
+            relatedBaseModel.getTnPath(relatedBaseModel.model.table_name),
+          )
+          .where(relatedColumn.column_name, '=', id),
+        null,
+        { raw: true, first: true },
+      );
+
+      // validate rowId
+      if (!row) {
+        return {};
+      }
+
+      return relatedBaseModel.readByPk(
+        relatedBaseModel.extractPksValues(row, true),
+        row.id,
+      );
+    } catch (e) {
+      throw e;
+    }
   }
 
   async btRead(
@@ -8798,7 +6114,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     cookie?: { user?: any };
     model?: Model;
     knex?: XKnex;
-    baseModel?: IBaseModelSqlV2;
+    baseModel?: BaseModelSqlv2;
   }) {
     const columns = await model.getColumns(this.context);
 
@@ -8831,11 +6147,173 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     await this.execAndParse(qb, null, { raw: true });
   }
 
+  findIntermediateOrder(before: BigNumber, after: BigNumber): BigNumber {
+    if (after.lte(before)) {
+      NcError.cannotCalculateIntermediateOrderError();
+    }
+    return before.plus(after.minus(before).div(2));
+  }
+
+  async getUniqueOrdersBeforeItem(before: unknown, amount = 1, depth = 0) {
+    try {
+      if (depth > MAX_RECURSION_DEPTH) {
+        NcError.reorderFailed();
+      }
+
+      const orderColumn = this.model.columns.find((c) => isOrderCol(c));
+      if (!orderColumn) {
+        return;
+      }
+
+      if (!before) {
+        const highestOrder = await this.getHighestOrderInTable();
+
+        return Array.from({ length: amount }).map((_, i) => {
+          return highestOrder.plus(i + 1);
+        });
+      }
+
+      const row = await this.readByPk(
+        before,
+        false,
+        {},
+        { extractOrderColumn: true },
+      );
+
+      if (!row) {
+        return await this.getUniqueOrdersBeforeItem(null, amount, depth);
+      }
+
+      const currentRowOrder = new BigNumber(row[orderColumn.title] ?? 0);
+
+      const resultQuery = this.dbDriver(this.tnPath)
+        .where(orderColumn.column_name, '<', currentRowOrder.toString())
+        .max(orderColumn.column_name + ' as maxOrder')
+        .first();
+
+      const result = await resultQuery;
+
+      const adjacentOrder = new BigNumber(result.maxOrder || 0);
+
+      const orders = [];
+
+      for (let i = 0; i < amount; i++) {
+        const intermediateOrder = this.findIntermediateOrder(
+          adjacentOrder.plus(i),
+          currentRowOrder,
+        );
+
+        if (
+          intermediateOrder.eq(adjacentOrder) ||
+          intermediateOrder.eq(currentRowOrder)
+        ) {
+          throw NcError.cannotCalculateIntermediateOrderError();
+        }
+
+        orders.push(intermediateOrder);
+      }
+
+      return orders;
+    } catch (error) {
+      if (error.error === NcErrorType.CANNOT_CALCULATE_INTERMEDIATE_ORDER) {
+        console.error('Error in getUniqueOrdersBeforeItem:', error);
+        await this.recalculateFullOrder();
+        return await this.getUniqueOrdersBeforeItem(before, amount, depth + 1);
+      }
+      throw error;
+    }
+  }
+
+  async recalculateFullOrder() {
+    const primaryKeys = this.model.primaryKeys.map((pk) => pk.column_name);
+
+    const sql = {
+      mysql2: {
+        modern: `UPDATE ?? SET ?? = ROW_NUMBER() OVER (ORDER BY ?? ASC)`, // 8.0+
+        legacy: {
+          // 5.x and below
+          init: 'SET @row_number = 0;',
+          update:
+            'UPDATE ?? SET ?? = (@row_number:=@row_number+1) ORDER BY ?? ASC',
+        },
+      },
+      pg: `UPDATE ?? t SET ?? = s.rn FROM (SELECT ??, ${primaryKeys
+        .map((_pk) => `??`)
+        .join(
+          ', ',
+        )}, ROW_NUMBER() OVER (ORDER BY ?? ASC) rn FROM ??) s WHERE ${this.model.primaryKeys
+        .map((_pk) => `t.?? = s.??`)
+        .join(' AND ')}`,
+      sqlite3: `WITH rn AS (SELECT ${this.model.primaryKeys
+        .map((_pk) => `??`)
+        .join(
+          ', ',
+        )}, ROW_NUMBER() OVER (ORDER BY ?? ASC) rn FROM ??) UPDATE ?? SET ?? = (SELECT rn FROM rn WHERE ${this.model.primaryKeys
+        .map((_pk) => `rn.?? = ??.??`)
+        .join(' AND ')})`,
+    };
+
+    const orderColumn = this.model.columns.find((c) => isOrderCol(c));
+    if (!orderColumn) {
+      NcError.badRequest('Order column not found to recalculateOrder');
+    }
+
+    const client = this.dbDriver.client.config.client;
+    if (!sql[client]) {
+      NcError.notImplemented(
+        'Recalculate order not implemented for this database',
+      );
+    }
+
+    const params = {
+      mysql2: [this.tnPath, orderColumn.column_name, orderColumn.column_name],
+      pg: [
+        this.tnPath,
+        orderColumn.column_name,
+        orderColumn.column_name,
+        ...primaryKeys,
+        orderColumn.column_name,
+        this.tnPath,
+        ...primaryKeys.flatMap((pk) => [pk, pk]), // Flatten pk array for binding
+      ],
+      sqlite3: [
+        ...primaryKeys,
+        orderColumn.column_name,
+        this.tnPath,
+        this.tnPath,
+        orderColumn.column_name,
+        ...primaryKeys.flatMap((pk) => [pk, this.tnPath, pk]), // Flatten pk array for binding
+      ],
+    };
+
+    // For MySQL, check version and use appropriate query
+    if (client === 'mysql2') {
+      const version = await this.execAndGetRows('SELECT VERSION()');
+      const isMySql8Plus = parseFloat(version[0]?.[0]?.['VERSION()']) >= 8.0;
+
+      if (isMySql8Plus) {
+        await this.execAndGetRows(
+          this.dbDriver.raw(sql[client].modern, params[client]).toQuery(),
+        );
+      } else {
+        await this.execAndGetRows(sql[client].legacy.init);
+        await this.execAndGetRows(
+          this.dbDriver
+            .raw(sql[client].legacy.update, params[client])
+            .toQuery(),
+        );
+      }
+    } else {
+      const query = this.dbDriver.raw(sql[client], params[client]).toQuery();
+      await this.execAndGetRows(query);
+    }
+  }
+
   async prepareNocoData(
     data,
     isInsertData = false,
     cookie?: { user?: any; system?: boolean },
-    // oldData uses title as key where as data uses column_name as key
+    // oldData uses title as key whereas data uses column_name as key
     oldData?,
     extra?: {
       raw?: boolean;
@@ -8846,6 +6324,33 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   ): Promise<void> {
     for (const column of this.model.columns) {
       if (
+        !ncIsUndefined(data[column.column_name]) &&
+        !ncIsNull(data[column.column_name]) &&
+        (this.context.api_version === NcApiVersion.V3 ||
+          // partially open the parseUserInput to several UITypes
+          [
+            UITypes.LongText,
+            UITypes.SingleLineText,
+            UITypes.PhoneNumber,
+            UITypes.Email,
+            UITypes.JSON,
+            UITypes.Currency,
+          ].includes(column.uidt as UITypes))
+      ) {
+        data[column.column_name] = (
+          await FieldHandler.fromBaseModel(this).parseUserInput({
+            value: data[column.column_name],
+            column,
+            oldData,
+            row: data,
+            options: {
+              context: this.context,
+              logger: logger,
+            },
+          })
+        ).value;
+      }
+      if (
         ![
           UITypes.Attachment,
           UITypes.JSON,
@@ -8855,6 +6360,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           UITypes.CreatedBy,
           UITypes.LastModifiedBy,
           UITypes.LongText,
+          UITypes.MultiSelect,
           UITypes.Order,
         ].includes(column.uidt) ||
         (column.uidt === UITypes.LongText &&
@@ -8868,9 +6374,16 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             data[column.column_name] = this.now();
           } else if (column.uidt === UITypes.CreatedBy) {
             data[column.column_name] = cookie?.user?.id;
-          } else if (column.uidt === UITypes.Order) {
-            data[column.column_name] =
-              extra?.ncOrder ?? (await this.getHighestOrderInTable());
+          } else if (column.uidt === UITypes.Order && !extra?.undo) {
+            if (extra?.before) {
+              data[column.column_name] = (
+                await this.getUniqueOrdersBeforeItem(extra?.before, 1)
+              )[0].toString();
+            } else {
+              data[column.column_name] = (
+                extra?.ncOrder ?? (await this.getHighestOrderInTable())
+              ).toString();
+            }
           }
         }
         if (column.uidt === UITypes.LastModifiedTime) {
@@ -8879,15 +6392,61 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           data[column.column_name] = isInsertData ? null : cookie?.user?.id;
         }
       }
-      if (column.uidt === UITypes.Attachment) {
+      if (
+        column.uidt === UITypes.Attachment &&
+        this.context.api_version === NcApiVersion.V3
+      ) {
+        if (column.column_name in data) {
+          if (
+            data &&
+            data[column.column_name] &&
+            typeof data[column.column_name] === 'object'
+          ) {
+            data[column.column_name] = JSON.stringify(data[column.column_name]);
+          }
+        }
+      } else if (
+        column.uidt === UITypes.Attachment &&
+        this.context.api_version !== NcApiVersion.V3
+      ) {
         if (column.column_name in data) {
           if (data && data[column.column_name]) {
             try {
               if (typeof data[column.column_name] === 'string') {
                 data[column.column_name] = JSON.parse(data[column.column_name]);
               }
+
+              if (
+                data[column.column_name] &&
+                !Array.isArray(data[column.column_name])
+              ) {
+                NcError.invalidAttachmentJson(data[column.column_name]);
+              }
             } catch (e) {
               NcError.invalidAttachmentJson(data[column.column_name]);
+            }
+
+            // Confirm that all urls are valid urls
+            for (const attachment of data[column.column_name] || []) {
+              if (!('url' in attachment) && !('path' in attachment)) {
+                NcError.unprocessableEntity(
+                  'Attachment object must contain either url or path',
+                );
+              }
+
+              if (attachment.url) {
+                if (attachment.url.startsWith('data:')) {
+                  NcError.unprocessableEntity(
+                    `Attachment urls do not support data urls`,
+                  );
+                }
+
+                if (attachment.url.length > 8 * 1024) {
+                  NcError.unprocessableEntity(
+                    `Attachment url '${attachment.url}' is too long`,
+                  );
+                }
+              }
             }
           }
 
@@ -8927,18 +6486,24 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                 : [],
             );
 
+            const deleteIds = [];
+
             for (const [oldId, oldAttachment] of oldAttachmentMap) {
               if (!newAttachmentMap.has(oldId)) {
-                await FileReference.delete(this.context, oldId);
+                deleteIds.push(oldId);
               } else if (
                 (oldAttachment.url &&
                   oldAttachment.url !== newAttachmentMap.get(oldId).url) ||
                 (oldAttachment.path &&
                   oldAttachment.path !== newAttachmentMap.get(oldId).path)
               ) {
-                await FileReference.delete(this.context, oldId);
+                deleteIds.push(oldId);
                 regenerateIds.push(oldId);
               }
+            }
+
+            if (deleteIds.length) {
+              await FileReference.delete(this.context, deleteIds);
             }
 
             for (const [newId, newAttachment] of newAttachmentMap) {
@@ -9023,7 +6588,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
           const baseUsers = await BaseUser.getUsersList(this.context, {
             base_id: this.model.base_id,
-            include_ws_deleted: false,
+            // deleted user may still exists on some fields
+            // it's still valid as a historical record
+            include_ws_deleted: true,
+            include_internal_user: true,
           });
 
           if (typeof data[column.column_name] === 'object') {
@@ -9130,11 +6698,25 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         ) {
           data[column.column_name] = JSON.stringify(data[column.column_name]);
         }
+      } else if (UITypes.MultiSelect === column.uidt) {
+        if (
+          data[column.column_name] &&
+          Array.isArray(data[column.column_name])
+        ) {
+          data[column.column_name] = data[column.column_name].join(',');
+        }
       } else if (isAIPromptCol(column) && !extra?.raw) {
         if (data[column.column_name]) {
           let value = data[column.column_name];
+          /**
+           * IsAiEdited is used to fix edited by ai issue in expanded form as cookie?.system will be undefined in that case
+           */
+          let isAiEdited = false;
 
           if (typeof value === 'object') {
+            isAiEdited = value.isAiEdited;
+            delete value.isAiEdited;
+
             value = value.value;
           }
 
@@ -9145,7 +6727,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
             isStale?: string;
           } = {};
 
-          if (cookie?.system === true) {
+          if (cookie?.system === true || isAiEdited) {
             Object.assign(obj, {
               value,
               lastModifiedBy: null,
@@ -9179,11 +6761,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   public now() {
     return dayjs()
       .utc()
-      .format(
-        this.isMySQL || this.isMssql
-          ? 'YYYY-MM-DD HH:mm:ss'
-          : 'YYYY-MM-DD HH:mm:ssZ',
-      );
+      .format(this.isMySQL ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD HH:mm:ssZ');
   }
 
   async getCustomConditionsAndApply(params: {
@@ -9273,7 +6851,38 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
-  public async bulkAudit({
+  private async broadcastLinkUpdateAwaited(ids: Array<string>) {
+    const ast = await getAst(this.context, {
+      model: this.model,
+    });
+
+    const list = await this.chunkList({
+      pks: ids,
+      chunkSize: 100,
+      args: ast.dependencyFields,
+    });
+
+    for (const item of list) {
+      const extractedId = this.extractPksValues(item);
+      NocoSocket.broadcastEvent(this.context, {
+        event: EventType.DATA_EVENT,
+        payload: {
+          action: 'update',
+          payload: item,
+          id: extractedId,
+        },
+        scopes: [this.model.id],
+      });
+    }
+  }
+
+  public async broadcastLinkUpdates(ids: Array<string>) {
+    this.broadcastLinkUpdateAwaited(ids).catch((e) => {
+      logger.error(e);
+    });
+  }
+
+  async bulkAudit({
     qb,
     data,
     conditions,
@@ -9284,7 +6893,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     data?: Record<string, any>;
     conditions: FilterType[];
     req: NcRequest;
-    event: AuditV1OperationTypes;
+    event: BulkAuditV1OperationTypes;
   }) {
     try {
       let batchStart = 0;
@@ -9305,7 +6914,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
           .orderBy(this.model.primaryKey.column_name);
 
         // if bulk update include old data as well
-        if (event === 'DATA_BULK_UPDATE') {
+        if (event === AuditV1OperationTypes.DATA_BULK_UPDATE) {
           await this.selectObject({
             qb: pkQb,
             fields: Object.keys(data),
@@ -9316,7 +6925,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
 
         if (!ids?.length) break;
 
-        if (event === 'DATA_BULK_UPDATE') {
+        if (event === AuditV1OperationTypes.DATA_BULK_UPDATE) {
           await this.bulkUpdateAudit({
             rowIds: ids,
             req,
@@ -9332,7 +6941,10 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         }
         batchStart += batchSize;
       }
+    } catch (e) {
+      logger.error(e.message, e.stack);
     }
+  }
 
   public async bulkUpdateAudit({
     rowIds,
@@ -9375,153 +6987,6 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       );
     }
     await Audit.insert(auditUpdateObj);
-  }
-
-  async afterAddOrRemoveChild(
-    commonAuditObj: {
-      opType: AuditV1OperationTypes;
-      model: Model;
-      refModel: Model;
-      columnTitle: string;
-      columnId: string;
-      refColumnTitle: string;
-      refColumnId: string;
-      req: NcRequest;
-    },
-    auditObjs: Array<{
-      rowId: unknown;
-      refRowId: unknown;
-      displayValue?: unknown;
-      refDisplayValue?: unknown;
-      type: RelationTypes;
-    }>,
-  ): Promise<void> {
-    if (!(await this.isDataAuditEnabled())) {
-      return;
-    }
-
-    const { opType, model, refModel, columnTitle, columnId, req } =
-      commonAuditObj;
-
-    const context = {
-      ...this.context,
-      base_id: model.base_id,
-    };
-
-    const refContext = {
-      ...this.context,
-      base_id: refModel.base_id,
-    };
-
-    // populate missing display values
-    const refBaseModel = await Model.getBaseModelSQL(refContext, {
-      model: refModel,
-      dbDriver: this.dbDriver,
-    });
-
-    await model.getColumns(context);
-    await refModel.getColumns(refContext);
-
-    const missingDisplayValues = auditObjs.filter(
-      (auditObj) => !auditObj.displayValue,
-    );
-
-    const missingRefDisplayValues = auditObjs.filter(
-      (auditObj) => !auditObj.refDisplayValue,
-    );
-
-    const displayValueColumn = model.displayValue;
-    const refDisplayValueColumn = refModel.displayValue;
-
-    const displayValueMap = new Map<string, string>();
-    const refDisplayValueMap = new Map<string, string>();
-
-    if (missingDisplayValues.length > 0) {
-      for (let i = 0; i < missingDisplayValues.length; i += 100) {
-        const chunk = missingDisplayValues.slice(i * 100, (i + 1) * 100);
-
-        const displayValues = await this.list(
-          {
-            pks: chunk.map((auditObj) => auditObj.rowId).join(','),
-          },
-          {
-            limitOverride: chunk.length,
-            ignoreViewFilterAndSort: true,
-          },
-        );
-
-        for (const displayValue of displayValues) {
-          const pk = this.extractPksValues(displayValue, true);
-
-          displayValueMap.set(pk, displayValue[displayValueColumn.title]);
-        }
-      }
-    }
-
-    if (missingRefDisplayValues.length > 0) {
-      for (let i = 0; i < missingRefDisplayValues.length; i += 100) {
-        const chunk = missingRefDisplayValues.slice(i * 100, (i + 1) * 100);
-
-        const refDisplayValues = await refBaseModel.list(
-          {
-            pks: chunk.map((auditObj) => auditObj.refRowId).join(','),
-          },
-          {
-            limitOverride: chunk.length,
-            ignoreViewFilterAndSort: true,
-          },
-        );
-
-        for (const refDisplayValue of refDisplayValues) {
-          const pk = refBaseModel.extractPksValues(refDisplayValue, true);
-
-          refDisplayValueMap.set(
-            pk,
-            refDisplayValue[refDisplayValueColumn.title],
-          );
-        }
-      }
-    }
-
-    const auditPayloads = await Promise.all(
-      auditObjs.map(async (auditObj) => {
-        if (!auditObj.refDisplayValue) {
-          auditObj.refDisplayValue = refDisplayValueMap.get(
-            `${auditObj.refRowId}`,
-          );
-        }
-        if (!auditObj.displayValue) {
-          auditObj.displayValue = displayValueMap.get(`${auditObj.rowId}`);
-        }
-        // Build and return the audit payload.
-        return generateAuditV1Payload<DataLinkPayload>(opType, {
-          context: {
-            ...context,
-            source_id: model.source_id,
-            fk_model_id: model.id,
-            row_id: this.extractPksValues(auditObj.rowId, true) as string,
-          },
-          details: {
-            table_title: model.title,
-            ref_table_title: refModel.title,
-            link_field_title: columnTitle,
-            link_field_id: columnId,
-            row_id: auditObj.rowId,
-            ref_row_id: auditObj.refRowId,
-            display_value: auditObj.displayValue,
-            ref_display_value: auditObj.refDisplayValue,
-            type: auditObj.type,
-          },
-          req,
-        });
-      }),
-    );
-
-    await Audit.insert(auditPayloads);
-  }
-
-  async broadcastLinkUpdates(_params: any): Promise<void> {
-    // placeholder implementation
   }
 
   protected async bulkDeleteAudit(_: {

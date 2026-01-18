@@ -5,9 +5,7 @@ import {
   UITypes,
   dateFormats,
   hideExtraFieldsMetaKey,
-  isBtLikeV2Junction,
   isDateOrDateTimeCol,
-  isLinkV2,
   isLinksOrLTAR,
   isNumericCol,
   isSystemColumn,
@@ -16,6 +14,7 @@ import {
   timeFormats,
 } from 'nocodb-sdk'
 import type { ComputedRef, Ref } from 'vue'
+import { useColumnVisibility } from './useColumnVisibility'
 
 interface DataApiResponse {
   list: Record<string, any>[]
@@ -43,7 +42,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
     }
 
     // state
-    const { getMeta, getMetaByKey, getPartialMeta, metas } = useMetas()
+    const { metas, getMeta } = useMetas()
 
     const { base, sqlUis } = storeToRefs(useBase())
 
@@ -51,7 +50,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
 
     const { $api, $e } = useNuxtApp()
 
-    const { isMobileMode } = useGlobal()
+    const { isMobileMode, user: $user } = useGlobal()
 
     const activeView = inject(ActiveViewInj, ref())
     const isForm = inject(IsFormInj, ref(false))
@@ -118,17 +117,6 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
 
     const colOptions = computed(() => column.value?.colOptions as LinkToAnotherRecordType)
 
-    const type = computed(() => colOptions.value?.type as RelationTypes)
-
-    const isSingleTargetRelation = computed(() => {
-      return (
-        colOptions.value?.type === RelationTypes.MANY_TO_ONE ||
-        colOptions.value?.type === RelationTypes.BELONGS_TO ||
-        colOptions.value?.type === RelationTypes.ONE_TO_ONE ||
-        isBtLikeV2Junction(column.value)
-      )
-    })
-
     const { sharedView } = useSharedView()
 
     const { getViewColumns } = useSmartsheetStoreOrThrow()
@@ -138,17 +126,9 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
     const baseId = base.value?.id || (sharedView.value?.view as any)?.base_id
 
     // getters
-    const meta = computed(() => getMetaByKey(column?.value?.base_id as string, column?.value?.fk_model_id as string))
+    const meta = computed(() => metas?.value?.[column?.value?.fk_model_id as string])
     const relatedTableMeta = computed<TableType>(() => {
-      const relatedBaseId = colOptions.value?.fk_related_base_id || column?.value?.base_id
-      return getMetaByKey(relatedBaseId as string, colOptions.value?.fk_related_model_id as string)
-    })
-
-    // Check if linked table is accessible based on is_private flag from API response only
-    const isLinkedTableAccessible = computed(() => {
-      if (!colOptions.value?.fk_related_model_id) return true
-      // Check if table is marked as private from API response
-      return !(relatedTableMeta.value as any)?.is_private
+      return metas.value?.[colOptions.value?.fk_related_model_id as string]
     })
 
     const sqlUi = computed(() =>
@@ -168,25 +148,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
     // actions
 
     const loadRelatedTableMeta = async () => {
-      const relatedBaseId = colOptions.value.fk_related_base_id || column.value.base_id
-      if (!relatedBaseId) {
-        console.error('Cannot load related table meta: base_id not found')
-        return
-      }
-
-      const tableId = colOptions.value.fk_related_model_id as string
-      const colId = colOptions.value.fk_column_id as string
-
-      // Try fetching full table meta first. If it fails (e.g., user lacks permission
-      // to access the related table), fall back to partial meta which only fetches
-      // the linked column metadata needed to render the LTAR cell.
-      try {
-        await getMeta(relatedBaseId, tableId, false, false, true)
-      } catch {}
-      const metaKey = `${relatedBaseId}:${tableId}`
-      if (!metas.value[metaKey]) {
-        await getPartialMeta(relatedBaseId, colId, tableId)
-      }
+      await getMeta(colOptions.value.fk_related_model_id as string)
 
       if (isPublic.value) return
 
@@ -196,13 +158,14 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       if (!viewId) return
 
       try {
-        // Pass relatedBaseId as first parameter for proper cross-base support
-        targetViewColumns.value = (await getViewColumns(relatedBaseId, viewId)) ?? []
-      } catch (e) {
-        console.error('Failed to load related table view columns:', e)
+        targetViewColumns.value = (await getViewColumns(viewId)) ?? []
+      } catch {
         targetViewColumns.value = []
-        message.error('Failed to load related table view columns')
+        message.error('Field to load related table view columns')
       }
+
+      // Load column visibility data for the related table
+      await loadColumnVisibility(relatedTableMeta.value.id)
     }
 
     const relatedTableDisplayValueColumn = computed(() => {
@@ -216,6 +179,10 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
     // todo: temp fix, handle in backend
     const relatedTableDisplayValuePropId = computed(() => {
       return relatedTableDisplayValueColumn.value?.id || ''
+    })
+
+    const relatedTablePrimaryKeyProps = computed(() => {
+      return relatedTableMeta.value?.columns?.filter((c) => c.pk)?.map((c) => c.title) ?? []
     })
 
     const displayValueProp = computed(() => {
@@ -271,40 +238,34 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       ref([]),
     )
 
-    const fields = computedInject(
-      FieldsInj,
-      (_fields) => {
-        return (relatedTableMeta.value.columns ?? [])
-          .filter((col) => {
-            // Hiding lookup field from dropdown as we don't send lookup field info in list response due to performance reasons
-            return !isSystemColumn(col) && !isPrimary(col) && !isLinksOrLTAR(col) && !isAttachment(col) && !isLookup(col)
-          })
-          .sort((a, b) => {
-            if (isPublic.value) {
-              return (a.meta?.defaultViewColOrder ?? Infinity) - (b.meta?.defaultViewColOrder ?? Infinity)
-            }
+    // Use shared column visibility composable
+    const { filterVisibleColumns, loadColumnVisibility } = useColumnVisibility()
 
-            return (
-              (targetViewColumnsById.value[a.id!]?.order ?? Infinity) - (targetViewColumnsById.value[b.id!]?.order ?? Infinity)
-            )
-          })
-          .slice(0, isMobileMode.value ? 1 : 3)
-      },
-      ref([]),
-    )
+    // Patched fields that applies visibility filtering to original logic
+    const fields = ref<any[]>([])
 
-    const fieldsToLoad = computed(() => {
-      return [
-        relatedTableDisplayValueColumn.value,
-        ...(relatedTableMeta.value?.columns?.filter((c) => c.pk) || []),
-        ...(attachmentCol.value ? [attachmentCol.value] : []),
-        ...(fields.value || []),
-      ].filter((c) => c)
-    })
+    // Function to update fields - applies original logic then visibility patch
+    const updateFields = async () => {
+      if (!relatedTableMeta.value?.columns) {
+        fields.value = []
+        return
+      }
 
-    const requiredFieldsToLoad = computed(() => {
-      return Array.from(new Set(fieldsToLoad.value?.map((f) => f.id as string)))
-    })
+      // Use original upstream logic
+      const originalFilteredColumns = (relatedTableMeta.value.columns ?? [])
+        .filter((col) => !isSystemColumn(col) && !isPrimary(col) && !isLinksOrLTAR(col) && !isAttachment(col))
+        .sort((a, b) => {
+          if (isPublic.value) {
+            return (a.meta?.defaultViewColOrder ?? Infinity) - (b.meta?.defaultViewColOrder ?? Infinity)
+          }
+
+          return (targetViewColumnsById.value[a.id!]?.order ?? Infinity) - (targetViewColumnsById.value[b.id!]?.order ?? Infinity)
+        })
+        .slice(0, isMobileMode.value ? 1 : 3)
+
+      // Apply column visibility patch
+      fields.value = filterVisibleColumns(originalFilteredColumns, externalBaseUserRoles.value)
+    }
 
     // extract external base roles if cross base link
     const externalBaseUserRoles = computedAsync(async () => {
@@ -315,16 +276,29 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       })
     })
 
+    // Watch for changes and update fields
+    watch([relatedTableMeta, externalBaseUserRoles, () => $user.value?.base_roles], updateFields, { immediate: true })
+
+    const requiredFieldsToLoad = computed(() => {
+      return Array.from(
+        new Set([
+          relatedTableDisplayValueProp.value,
+          ...relatedTablePrimaryKeyProps.value,
+          ...(attachmentCol.value ? [attachmentCol.value?.title] : []),
+          ...(fields.value || [])?.map((f) => f.title?.trim() as string),
+        ]),
+      )
+    })
+
     /**
      * Extract only primary key(pk) and primary value(pv) column data
      */
     const extractOnlyPrimaryValues = async (value: any, col: ColumnType) => {
       const currColOptions = (col.colOptions || {}) as LinkToAnotherRecordType
-      const relatedBaseId = currColOptions.fk_related_base_id || column.value.base_id
 
-      await getMeta(relatedBaseId, currColOptions.fk_related_model_id as string)
+      await getMeta(currColOptions.fk_related_model_id as string)
 
-      const currColRelatedTableMeta = getMetaByKey(relatedBaseId, currColOptions?.fk_related_model_id as string)
+      const currColRelatedTableMeta = metas.value?.[currColOptions?.fk_related_model_id as string] as TableType
 
       if (!currColRelatedTableMeta) return
 
@@ -405,39 +379,51 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
     }
 
     const getWhereClause = (searchQuery?: string) => {
-      if (!searchQuery || !relatedTableDisplayValueColumn.value) return
+      if (!searchQuery) return
 
-      const field = relatedTableDisplayValueColumn.value
-      let operator = 'like'
-      let query = searchQuery.trim()
+      const fieldQuery = [
+        ...(relatedTableDisplayValueColumn.value ? [relatedTableDisplayValueColumn.value] : []),
+        ...(fields.value || []),
+      ]
+        .filter((col) => isSearchableColumn(col))
+        .map((field: ColumnType): string => {
+          let operator = 'like'
+          let query = searchQuery.trim()
 
-      if (isDateOrDateTimeCol(field)) {
-        operator = 'eq,exactDate'
-      } else {
-        query = getValidSearchQueryForColumn(field, query, relatedTableMeta.value) as string
+          const isDateOrDateTime = isDateOrDateTimeCol(relatedTableDisplayValueColumn.value!) && isDateOrDateTimeCol(field)
 
-        if (!isValidValue(query)) return
+          if (!isDateOrDateTime) {
+            query = getValidSearchQueryForColumn(field, query, relatedTableMeta.value) as string
+          }
 
-        if (
-          (field.uidt !== UITypes.Formula || getFormulaColDataType(field) !== FormulaDataTypes.NUMERIC) &&
-          !isNumericCol(field) &&
-          sqlUi.value &&
-          ['text', 'string'].includes(sqlUi.value.getAbstractType(field)) &&
-          field.dt !== 'bigint'
-        ) {
-          operator = 'like'
-          if (!query) return
+          if (!isValidValue(query)) return ''
 
-          query = `%${query}%`
-        } else {
-          operator = 'eq'
-          query = !ncIsNaN(query) ? query : ''
-        }
-      }
+          if (isDateOrDateTimeCol(relatedTableDisplayValueColumn.value!) && isDateOrDateTimeCol(field)) {
+            operator = 'eq,exactDate'
+          } else if (
+            (field.uidt !== UITypes.Formula || getFormulaColDataType(field) !== FormulaDataTypes.NUMERIC) &&
+            !isNumericCol(field) &&
+            sqlUi.value &&
+            ['text', 'string'].includes(sqlUi.value.getAbstractType(field)) &&
+            field.dt !== 'bigint'
+          ) {
+            operator = 'like'
+            if (!query) return ''
 
-      if (!query) return
+            query = `%${query}%`
+          } else {
+            operator = 'eq'
+            query = !ncIsNaN(query) ? query : ''
+          }
 
-      return `(${field.title},${operator},${query})`
+          if (!query) return ''
+
+          return `(${field.title},${operator},${query})`
+        })
+        .filter(Boolean)
+        .join('~or')
+
+      return fieldQuery
     }
 
     const loadChildrenExcludedList = async (activeState?: any, resetOffset = false) => {
@@ -490,17 +476,18 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
         } else if (isNewRow?.value) {
           const linkRowData = await sanitizeRowData(row.value.row)
 
-          childrenExcludedList.value = await $api.internal.getOperation(
-            (column.value as any).fk_workspace_id!,
-            column.value!.base_id!,
+          childrenExcludedList.value = await $api.dbTableRow.list(
+            NOCO,
+            relatedTableMeta?.value?.base_id ?? baseId,
+            relatedTableMeta?.value?.id as string,
             {
-              operation: 'linkDataList',
               limit: childrenExcludedListPagination.size,
               offset,
               where,
-              columnId: column.value.fk_column_id || column.value.id,
+              // todo: include only required fields
+              linkColumnId: column.value.fk_column_id || column.value.id,
               linkRowData: JSON.stringify(linkRowData),
-            },
+            } as any,
           )
           const ids = new Set(childrenList.value?.list?.map((item) => item.Id) ?? [])
           if (childrenExcludedList.value.list && ids.size) {
@@ -522,17 +509,16 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
 
           childrenExcludedList.value = await $api.dbTableRow.nestedChildrenExcludedList(
             NOCO,
-            meta.value?.base_id ?? baseId,
+            meta.value.base_id ?? baseId,
             meta.value.id,
             encodeURIComponent(rowId.value),
-            type.value,
+            colOptions.value.type as RelationTypes,
             column?.value?.id,
             {
               limit: String(childrenExcludedListPagination.size),
               offset: String(offset),
               where,
               linkRowData: changedRowData ? JSON.stringify(changedRowData) : undefined,
-              fields: requiredFieldsToLoad.value,
             } as any,
           )
         }
@@ -547,7 +533,9 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
           // compare all keys and values
           childrenExcludedList.value.list.forEach((row: any, index: number) => {
             const found = (
-              isSingleTargetRelation.value ? [activeState[column.value.title]] : activeState[column.value.title]
+              [RelationTypes.BELONGS_TO, RelationTypes.ONE_TO_ONE].includes(colOptions.value.type)
+                ? [activeState[column.value.title]]
+                : activeState[column.value.title]
             ).find((a: any) => {
               let isSame = true
 
@@ -568,7 +556,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
         // temporary fix to handle when offset is beyond limit
         const error = await extractSdkResponseErrorMsgv2(e)
 
-        if (error.error === NcErrorType.ERR_INVALID_OFFSET_VALUE) {
+        if (error.error === NcErrorType.INVALID_OFFSET_VALUE) {
           childrenExcludedListPagination.page = 0
           return loadChildrenExcludedList(activeState, true)
         }
@@ -584,7 +572,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
 
       try {
         isChildrenLoading.value = true
-        if (isSingleTargetRelation.value && !isLinkV2(column.value)) return
+        if ([RelationTypes.BELONGS_TO, RelationTypes.ONE_TO_ONE].includes(colOptions.value.type)) return
         if (!column.value) return
         let offset = childrenListPagination.size * (childrenListPagination.page - 1) + childrenListOffsetCount.value
         if (offset < 0 || resetOffset) {
@@ -621,7 +609,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
             childrenList.value = await $api.public.dataNestedList(
               sharedView.value?.uuid as string,
               encodeURIComponent(rowId.value),
-              type.value as RelationTypes,
+              colOptions.value.type as RelationTypes,
               column.value.id,
               {
                 limit: String(childrenListPagination.size),
@@ -640,23 +628,20 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
               meta.value?.base_id ?? ((base?.value?.id || (sharedView.value?.view as any)?.base_id) as string),
               meta.value.id,
               encodeURIComponent(rowId.value),
-              type.value as RelationTypes,
+              colOptions.value.type as RelationTypes,
               column?.value?.id,
               {
                 limit: String(limit ?? childrenListPagination.size),
                 offset: String(offset),
                 where,
-                fields: requiredFieldsToLoad.value,
               } as any,
             )
           }
         }
-        if (ncIsArray(childrenList.value?.list)) {
-          childrenList.value.list.forEach((row: Record<string, any>, index: number) => {
-            isChildrenListLinked.value[index] = true
-            isChildrenListLoading.value[index] = false
-          })
-        }
+        childrenList.value?.list.forEach((row: Record<string, any>, index: number) => {
+          isChildrenListLinked.value[index] = true
+          isChildrenListLoading.value[index] = false
+        })
 
         if (!childrenListPagination.query) {
           childrenListCount.value = childrenList.value?.pageInfo.totalRows ?? 0
@@ -708,31 +693,25 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       })
     }
 
-    const { addLTARRef, removeLTARRef, currentRow: rowStoreCurrentRow } = useSmartsheetRowStoreOrThrow()
-
     const unlink = async (
       row: Record<string, any>,
       { metaValue = meta.value }: { metaValue?: TableType } = {},
       undo = false,
       index: number, // Index is For Loading and Linked State of Row
     ) => {
-      // For new rows, remove from local state
-      if (isNewRow?.value || !rowId.value) {
-        removeLTARRef(row, column.value as ColumnType)
-        const targetRow = rowStoreCurrentRow.value
-        if (isSingleTargetRelation.value) {
-          targetRow.row[column.value.title!] = null
-        } else {
-          const arr = targetRow.row[column.value.title!]
-          if (Array.isArray(arr)) {
-            const idx = arr.indexOf(row)
-            if (idx !== -1) arr.splice(idx, 1)
-          }
-        }
-        isChildrenExcludedListLinked.value[index] = false
-        isChildrenListLinked.value[index] = false
-        return
-      }
+      // const column = meta.columns.find(c => c.id === this.column.colOptions.fk_child_column_id);
+      // todo: handle if new record
+      // if (this.isNew) {
+      //   this.$emit('updateCol', this.row, _cn, null);
+      //   this.localState = null;
+      //   this.$emit('update:localState', this.localState);
+      //   return;
+      // }
+      // todo: handle bt column if required
+      // if (column.rqd) {
+      //   this.$toast.info('Unlink is not possible, instead map to another parent.').goAway(3000);
+      //   return;
+      // }
       try {
         // todo: audit
 
@@ -750,7 +729,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
           metaValue?.base_id ?? (base.value.id as string),
           metaValue.id!,
           encodeURIComponent(rowId.value),
-          type.value as RelationTypes,
+          colOptions.value.type as RelationTypes,
           column?.value?.id,
           encodeURIComponent(getRelatedTableRowId(row) as string),
         )
@@ -771,7 +750,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
         }
         isChildrenExcludedListLinked.value[index] = false
         isChildrenListLinked.value[index] = false
-        if (!isSingleTargetRelation.value) {
+        if (colOptions.value.type !== RelationTypes.BELONGS_TO && colOptions.value.type !== RelationTypes.ONE_TO_ONE) {
           childrenListCount.value = childrenListCount.value - 1
         }
       } catch (e: any) {
@@ -796,23 +775,19 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       undo = false,
       index: number, // Index is For Loading and Linked State of Row
     ) => {
-      // For new rows, store the link in local state — it will be persisted on save via nested insert
-      if (isNewRow?.value || !rowId.value) {
-        addLTARRef(row, column.value as ColumnType)
-        // Update the row store's currentRow (not the LTAR store's snapshot) so components re-render
-        const targetRow = rowStoreCurrentRow.value
-        if (isSingleTargetRelation.value) {
-          targetRow.row[column.value.title!] = row
-        } else {
-          if (!Array.isArray(targetRow.row[column.value.title!])) {
-            targetRow.row[column.value.title!] = []
-          }
-          targetRow.row[column.value.title!].push(row)
-        }
-        isChildrenExcludedListLinked.value[index] = true
-        isChildrenListLinked.value[index] = true
-        return
-      }
+      // todo: handle new record
+      //   const pid = this._extractRowId(parent, this.parentMeta);
+      // const id = this._extractRowId(this.row, this.meta);
+      // const _cn = this.meta.columns.find(c => c.id === this.column.colOptions.fk_child_column_id).title;
+      //
+      // if (this.isNew) {
+      //   const _rcn = this.parentMeta.columns.find(c => c.id === this.column.colOptions.fk_parent_column_id).title;
+      //   this.localState = parent;
+      //   this.$emit('update:localState', this.localState);
+      //   this.$emit('updateCol', this.row, _cn, parent[_rcn]);
+      //   this.newRecordModal = false;
+      //   return;
+      // }
       try {
         isChildrenExcludedListLoading.value[index] = true
         isChildrenListLoading.value[index] = true
@@ -825,7 +800,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
           metaValue?.base_id ?? (base.value.id as string),
           metaValue.id as string,
           encodeURIComponent(rowId.value),
-          type.value as RelationTypes,
+          colOptions.value.type as RelationTypes,
           column?.value?.id,
           encodeURIComponent(getRelatedTableRowId(row) as string) as string,
         )
@@ -834,8 +809,8 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
         if (!undo) {
           let oldValue = null
 
-          // If it is bt/oo/V2 MO relation then we have to restore old value on undo
-          if (isBt(column.value) || isOo(column.value) || isBtLikeV2Junction(column.value)) {
+          // If it is bt or oo relation then we have to restore old value on undo
+          if (isBt(column.value) || isOo(column.value)) {
             oldValue = currentRow.value.row?.[column.value?.title]
           }
 
@@ -863,7 +838,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
         isChildrenExcludedListLinked.value[index] = true
         isChildrenListLinked.value[index] = true
 
-        if (!isSingleTargetRelation.value) {
+        if (colOptions.value.type !== RelationTypes.BELONGS_TO && colOptions.value.type !== RelationTypes.ONE_TO_ONE) {
           childrenListCount.value = childrenListCount.value + 1
         } else {
           isChildrenExcludedListLinked.value = Array(childrenExcludedList.value?.list.length).fill(false)
@@ -901,12 +876,10 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
     })
 
     watch(childrenList, async () => {
-      if (ncIsArray(childrenList.value?.list)) {
-        childrenList.value.list.forEach((row: Record<string, any>, index: number) => {
-          isChildrenListLinked.value[index] = true
-          isChildrenListLoading.value[index] = false
-        })
-      }
+      childrenList.value?.list.forEach((row: Record<string, any>, index: number) => {
+        isChildrenListLinked.value[index] = true
+        isChildrenListLoading.value[index] = false
+      })
     })
 
     const resetChildrenExcludedOffsetCount = () => {
@@ -919,7 +892,6 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
 
     return {
       relatedTableMeta,
-      isLinkedTableAccessible,
       loadRelatedTableMeta,
       targetViewColumns,
       targetViewColumnsById,

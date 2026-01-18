@@ -111,12 +111,12 @@ export default class PresignedUrl {
       filename?: string;
       preview?: boolean;
       mimetype?: string;
-      ignoreCache?: boolean
+      ignoreCache?: boolean;
       encoding?: string;
     },
     ncMeta = Noco.ncMeta,
   ) {
-    var ignoreCache = param.ignoreCache ?? false
+    var ignoreCache = param.ignoreCache ?? false;
     const isUrl = /^https?:\/\//i.test(param.pathOrUrl);
 
     let path = (
@@ -253,7 +253,7 @@ export default class PresignedUrl {
       expireSeconds?: number;
       // allow writing to nested property instead of root (used for thumbnails)
       nestedKeys?: string[];
-      ignoreCache?: boolean
+      ignoreCache?: boolean;
     },
     ncMeta = Noco.ncMeta,
   ) {

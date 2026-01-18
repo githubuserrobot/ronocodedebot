@@ -14,36 +14,36 @@ import {
   PlanLimitTypes,
   ViewTypes,
   isAIPromptCol,
-  isHiddenCol,
   isReadOnlyColumn,
   isSystemColumn,
   isVirtualCol,
 } from 'nocodb-sdk'
 import type { Ref } from 'vue'
 import dayjs from 'dayjs'
-
-interface AuditTypeExtended extends AuditType {
-  created_display_name?: string
-  created_display_name_short?: string
-  created_by_email?: string
-  created_by_meta?: MetaType
-}
+import { useColumnVisibility } from './useColumnVisibility'
 
 const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
-  (
-    meta: Ref<TableType>,
-    _row: Ref<Row>,
-    maintainDefaultViewOrder: Ref<boolean>,
-    useMetaFields: boolean,
-    allowNullFieldIds?: string[],
-  ) => {
+  (meta: Ref<TableType>, _row: Ref<Row>, maintainDefaultViewOrder: Ref<boolean>, useMetaFields: boolean) => {
     const { $e, $state, $api, $ncSocket } = useNuxtApp()
 
     const { t } = useI18n()
 
+    const { user: $user } = useGlobal()
+
     const isPublic = inject(IsPublicInj, ref(false))
 
-    const audits = ref<Array<AuditTypeExtended>>([])
+    // Use shared column visibility composable
+    const { loadColumnVisibility, isColumnHiddenForRole } = useColumnVisibility()
+
+    const audits = ref<
+      Array<
+        AuditType & {
+          created_display_name?: string
+          created_by_email?: string
+          created_by_meta?: MetaType
+        }
+      >
+    >([])
 
     const isAuditLoading = ref(false)
 
@@ -119,7 +119,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
       }
     })
 
-    const { fieldsMap, isLocalMode, showSystemFields, hasViewFieldDataEditPermission } = useViewColumnsOrThrow()
+    const { fieldsMap, isLocalMode } = useViewColumnsOrThrow()
 
     const isHiddenColumnInNewRecord = (col: ColumnType) => {
       return isReadOnlyColumn(col) || isAIPromptCol(col)
@@ -137,6 +137,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
      * - Prefers `props.useMetaFields` over `fieldsFromParent` if enabled.
      * - Filters out system columns and readonly fields for new records.
      * - Maintains default view order if `maintainDefaultViewOrder` is enabled.
+     * - Filters out columns hidden by role-based visibility rules.
      *
      * @returns {ColumnType[]} The computed list of fields.
      */
@@ -147,11 +148,12 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
           return (meta.value.columns ?? [])
             .filter(
               (col) =>
-                !isHiddenCol(col, meta.value ?? {}) &&
                 !isSystemColumn(col) &&
-                !!(col.meta?.defaultViewColVisibility ?? true) &&
+                !!col.meta?.defaultViewColVisibility &&
                 // if new record, then hide readonly fields
-                (!rowStore.isNew.value || !isHiddenColumnInNewRecord(col)),
+                (!rowStore.isNew.value || !isHiddenColumnInNewRecord(col)) &&
+                // filter by role-based column visibility
+                !isColumnHiddenForRole(col),
             )
             .sort((a, b) => {
               return (a.meta?.defaultViewColOrder ?? Infinity) - (b.meta?.defaultViewColOrder ?? Infinity)
@@ -160,23 +162,24 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
 
         return (meta.value.columns ?? []).filter(
           (col) =>
-            !isHiddenCol(col, meta.value ?? {}) &&
             // if new record, then hide readonly fields
             (!rowStore.isNew.value || !isHiddenColumnInNewRecord(col)) &&
             // exclude system columns
             !isSystemColumn(col) &&
             // exclude hidden columns
-            !!(col.meta?.defaultViewColVisibility ?? true),
+            !!col.meta?.defaultViewColVisibility &&
+            // filter by role-based column visibility
+            !isColumnHiddenForRole(col),
         )
       }
 
       // If `props.useMetaFields` is not enabled, use fields from the parent component
       if (fieldsFromParent.value) {
         if (rowStore.isNew.value) {
-          return fieldsFromParent.value.filter((col) => !isHiddenColumnInNewRecord(col))
+          return fieldsFromParent.value.filter((col) => !isHiddenColumnInNewRecord(col) && !isColumnHiddenForRole(col))
         }
 
-        return fieldsFromParent.value
+        return fieldsFromParent.value.filter((col) => !isColumnHiddenForRole(col))
       }
 
       return []
@@ -184,40 +187,41 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
 
     const hiddenFields = computed(() => {
       // todo: figure out when meta.value is undefined
-      const _hiddenFields = (meta.value?.columns ?? []).filter(
+      const hiddenFields = (meta.value?.columns ?? []).filter(
         (col) =>
-          !isHiddenCol(col, meta.value ?? {}) &&
-          (!useMetaFields || !isSystemColumn(col)) &&
+          !isSystemColumn(col) &&
           !fields.value?.includes(col) &&
-          (isLocalMode.value && !hasViewFieldDataEditPermission.value && col?.id && fieldsMap.value[col.id]
-            ? fieldsMap.value[col.id]?.initialShow
-            : true) &&
+          (isLocalMode.value && col?.id && fieldsMap.value[col.id] ? fieldsMap.value[col.id]?.initialShow : true) &&
           // exclude readonly fields from hidden fields if new record creation
-          (!rowStore.isNew.value || !isHiddenColumnInNewRecord(col)),
+          (!rowStore.isNew.value || !isHiddenColumnInNewRecord(col)) &&
+          // exclude columns hidden by role-based visibility
+          !isColumnHiddenForRole(col),
       )
-
       if (useMetaFields) {
         return maintainDefaultViewOrder.value
-          ? _hiddenFields.sort((a, b) => {
+          ? hiddenFields.sort((a, b) => {
               return (a.meta?.defaultViewColOrder ?? Infinity) - (b.meta?.defaultViewColOrder ?? Infinity)
             })
-          : _hiddenFields
+          : hiddenFields
       }
       // record from same view and same table (not linked)
       else {
-        return _hiddenFields
-          .filter((col) => {
-            if (rowStore.isNew.value || !showSystemFields.value) {
-              return !isSystemColumn(col)
-            }
-
-            return true
-          })
-          .sort((a, b) => {
-            return (fieldsMap.value[a.id]?.order ?? Infinity) - (fieldsMap.value[b.id]?.order ?? Infinity)
-          })
+        return hiddenFields.sort((a, b) => {
+          return (fieldsMap.value[a.id]?.order ?? Infinity) - (fieldsMap.value[b.id]?.order ?? Infinity)
+        })
       }
     })
+
+    // Load column visibility when meta changes
+    watch(
+      () => meta.value?.id,
+      async () => {
+        if (meta.value?.id) {
+          await loadColumnVisibility(meta.value.id)
+        }
+      },
+      { immediate: true },
+    )
 
     const auditToCursor = (audit: any) => {
       return `${audit.id}|${audit.created_at}`
@@ -253,6 +257,9 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
           },
         )
 
+        // Skip insert as it will be first for all
+        response.list = response.list.filter((audit) => !audit?.op_type.includes('INSERT'))
+
         const lastRecord = response.list?.[response.list.length - 1]
 
         if (lastRecord) {
@@ -268,8 +275,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
             const user = baseUsers.value.find((u) => u.id === audit.fk_user_id || u.email === audit.user)
             return {
               ...audit,
-              created_display_name: user?.display_name,
-              created_display_name_short: user?.display_name ?? extractNameFromEmail(user?.email),
+              created_display_name: user?.display_name ?? (user?.email ?? '').split('@')[0],
               created_by_email: user?.email,
               created_by_meta: user?.meta,
             }
@@ -279,7 +285,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
         console.error(e)
         const errorInfo = await extractSdkResponseErrorMsgv2(e)
 
-        if (isPaymentEnabled.value && errorInfo.error === NcErrorType.ERR_PLAN_LIMIT_EXCEEDED) {
+        if (isPaymentEnabled.value && errorInfo.error === NcErrorType.PLAN_LIMIT_EXCEEDED) {
           const details = errorInfo.details as PlanLimitExceededDetailsType
 
           handleUpgradePlan({
@@ -368,7 +374,6 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
           getMeta,
           row: row.value.row,
           throwError: true,
-          allowNullFieldIds,
         })
 
         if (missingRequiredColumns.size) return
@@ -435,18 +440,13 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
             return message.info(t('msg.info.updateNotAllowedWithoutPK'))
           }
 
-          const updatedData = await $api.dbTableRow.update(
+          await $api.dbTableRow.update(
             NOCO,
             meta.value.base_id ?? (base.value.id as string),
             meta.value.id,
             encodeURIComponent(id),
             updateOrInsertObj,
           )
-
-          // If the updated row is now hidden by RLS policy, mark it
-          if (updatedData?.__nc_rls_hidden) {
-            row.value.row.__nc_rls_hidden = true
-          }
 
           if (!undo) {
             const undoObject = [...changedColumns.value].reduce((obj, col) => {
@@ -501,9 +501,6 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
 
     const loadRow = async (rowId?: string, onlyVirtual = false, onlyNewColumns = false) => {
       if (row?.value?.rowMeta?.new || isPublic.value || !meta.value?.id) return
-
-      // Row is hidden by RLS policy — skip read to avoid 404
-      if (row?.value?.row?.__nc_rls_hidden) return
 
       const recordId = rowId ?? extractPkFromRow(row.value.row, meta.value.columns as ColumnType[])
 
@@ -600,7 +597,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
         const allAudits = JSON.parse(JSON.stringify(audits.value))
 
         for (const audit of allAudits) {
-          if (audit.op_type !== 'DATA_UPDATE' && audit.op_type !== 'DATA_CASCADE_UPDATE') {
+          if (audit.op_type !== 'DATA_UPDATE') {
             result.push(audit)
             continue
           }
@@ -719,8 +716,8 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
                 result.push(current)
               }
             }
-          } else if (current.op_type === 'DATA_UPDATE' || current.op_type === 'DATA_CASCADE_UPDATE') {
-            const last = result.findLast((it) => it.op_type === current.op_type)
+          } else if (current.op_type === 'DATA_UPDATE') {
+            const last = result.findLast((it) => it.op_type === 'DATA_UPDATE')
             if (!last || last.user !== current.user || dayjs(current.created_at).diff(dayjs(last.created_at), 'second') > 30) {
               result.push(current)
               continue
@@ -779,7 +776,6 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
       const adts = [...consolidatedAudits.value].map((it) => ({
         user: it.user,
         displayName: it.created_display_name,
-        displayNameShort: it.created_display_name_short,
         created_at: it.created_at,
         type: 'audit',
         audit: it,
@@ -789,7 +785,6 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
         ...it,
         user: it.created_by_email,
         displayName: it.created_display_name,
-        displayNameShort: it.created_display_name_short,
         type: 'comment',
       }))
 
@@ -879,8 +874,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
                 const user = baseUsers.value.find((u) => u.id === payload.created_by)
                 const finalPayload = {
                   ...payload,
-                  created_display_name: user?.display_name,
-                  created_display_name_short: user?.display_name ?? extractNameFromEmail(user?.email),
+                  created_display_name: user?.display_name ?? (user?.email ?? '').split('@')[0],
                   created_by_email: user?.email,
                   created_by_meta: user?.meta,
                 }
@@ -948,6 +942,7 @@ const [useProvideExpandedFormStore, useExpandedFormStore] = useInjectionState(
       hiddenFields,
       isAllowedAddNewRecord,
       getIsAllowedEditField,
+      loadColumnVisibility,
       meta,
     }
   },

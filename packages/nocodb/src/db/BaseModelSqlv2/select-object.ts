@@ -104,7 +104,6 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
           column,
           extractPkAndPv || pkAndPvOnly,
           pkAndPvOnly,
-          baseModel.context,
         )
       ) {
         continue;

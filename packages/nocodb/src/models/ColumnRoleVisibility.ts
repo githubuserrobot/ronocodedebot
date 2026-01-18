@@ -38,6 +38,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
     baseId: string,
   ): Promise<ColumnRoleVisibility[]> {
     const cachedList = await NocoCache.getList(
+      context,
       CacheScope.COLUMN_ROLE_VISIBILITY,
       [baseId],
     );
@@ -55,6 +56,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
         },
       );
       await NocoCache.setList(
+        context,
         CacheScope.COLUMN_ROLE_VISIBILITY,
         [baseId],
         data,
@@ -73,6 +75,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
       args.fk_column_id &&
       args.role &&
       (await NocoCache.get(
+        context,
         `${CacheScope.COLUMN_ROLE_VISIBILITY}:${args.fk_column_id}:${args.role}`,
         CacheGetType.TYPE_OBJECT,
       ));
@@ -87,6 +90,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
         },
       );
       await NocoCache.set(
+        context,
         `${CacheScope.COLUMN_ROLE_VISIBILITY}:${args.fk_column_id}:${args.role}`,
         data,
       );
@@ -116,6 +120,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
     );
 
     await NocoCache.update(
+      context,
       `${CacheScope.COLUMN_ROLE_VISIBILITY}:${fk_column_id}:${role}`,
       {
         disabled: body.disabled,
@@ -149,6 +154,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
       },
     );
     await NocoCache.deepDel(
+      context,
       `${CacheScope.COLUMN_ROLE_VISIBILITY}:${fk_column_id}:${role}`,
       CacheDelDirection.CHILD_TO_PARENT,
     );
@@ -201,6 +207,7 @@ export default class ColumnRoleVisibility implements ColumnRoleVisibilityType {
     ).then(async (columnRoleVisibility) => {
       const key = `${CacheScope.COLUMN_ROLE_VISIBILITY}:${body.fk_column_id}:${body.role}`;
       await NocoCache.appendToList(
+        context,
         CacheScope.COLUMN_ROLE_VISIBILITY,
         [context.base_id],
         key,

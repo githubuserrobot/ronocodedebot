@@ -102,6 +102,9 @@
       "sharp",
       "sqlite3",
       "vue-demi"
-    ]
+    ],
+    "dependencies": {
+    "@productdevbook/chatwoot": "^2.0.0"
+    }
   }
 }

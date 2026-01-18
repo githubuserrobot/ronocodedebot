@@ -24,7 +24,7 @@ const props = withDefaults(
 
 const emits = defineEmits(['expand', 'linkOrUnlink', 'close'])
 
-const { showExtraFields, relatedTableMeta, meta, isLinkedTableAccessible } = useLTARStoreOrThrow()!
+const { showExtraFields, relatedTableMeta, meta, isLinkedTableAccessible, fields: availableFields } = useLTARStoreOrThrow()!
 
 provide(IsExpandedFormOpenInj, ref(true))
 

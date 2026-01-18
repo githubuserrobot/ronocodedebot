@@ -16,6 +16,7 @@ import {
 } from 'nocodb-sdk'
 import type { ComputedRef, Ref } from 'vue'
 import { reconcilePendingLtarOp, resolveDeferredLtarCount, resolveDeferredSingleTargetValue } from '~/utils/ltarDeferredOps'
+import { useColumnVisibility } from './useColumnVisibility')
 
 interface DataApiResponse {
   list: Record<string, any>[]
@@ -78,7 +79,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
 
     const { $api, $e } = useNuxtApp()
 
-    const { isMobileMode } = useGlobal()
+    const { isMobileMode, user: $user } = useGlobal()
 
     const isForm = inject(IsFormInj, ref(false))
 
@@ -304,6 +305,9 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
         targetViewColumns.value = []
         message.error('Failed to load related table view columns')
       }
+
+      // Load column visibility data for the related table
+      await loadColumnVisibility(relatedTableMeta.value.id)
     }
 
     const relatedTableDisplayValueColumn = computed(() => {
@@ -379,6 +383,18 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       ref([]),
     )
 
+    // Use shared column visibility composable
+    const { filterVisibleColumns, loadColumnVisibility } = useColumnVisibility()
+
+    // extract external base roles if cross base link
+    const externalBaseUserRoles = computedAsync(async () => {
+      if (base.value?.id && base.value?.id === relatedTableMeta.value?.base_id) return
+
+      return await getBaseRoles(relatedTableMeta.value?.base_id, {
+        skipUpdatingUser: true,
+      })
+    })
+
     const fields = computedInject(
       FieldsInj,
       (_fields) => {
@@ -421,7 +437,7 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
           if (pvCol) sortedFields.unshift(pvCol)
         }
 
-        return sortedFields.slice(0, isMobileMode.value ? 1 : 3)
+        return filterVisibleColumns(sortedFields.slice(0, isMobileMode.value ? 1 : 3), externalBaseUserRoles.value)
       },
       ref([]),
     )
@@ -455,15 +471,6 @@ const [useProvideLTARStore, useLTARStore] = useInjectionState(
       return Array.from(
         new Set([...(fieldsToLoad.value?.map((f) => f.id as string) || []), ...formConditionLookupTargetColIds.value]),
       )
-    })
-
-    // extract external base roles if cross base link
-    const externalBaseUserRoles = computedAsync(async () => {
-      if (base.value?.id && base.value?.id === relatedTableMeta.value?.base_id) return
-
-      return await getBaseRoles(relatedTableMeta.value?.base_id, {
-        skipUpdatingUser: true,
-      })
     })
 
     /**

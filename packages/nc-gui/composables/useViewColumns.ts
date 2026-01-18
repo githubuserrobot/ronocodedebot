@@ -11,6 +11,7 @@ import type {
 import { CommonAggregations, ViewTypes, getFirstNonPersonalView, isHiddenCol, isSystemColumn } from 'nocodb-sdk'
 import type { ComputedRef, Ref } from 'vue'
 import type { InterfacePageDataApi } from '../lib/interfaceData'
+import { useColumnVisibility } from './useColumnVisibility'
 
 const [useProvideViewColumns, useViewColumns] = useInjectionState(
   (
@@ -81,6 +82,9 @@ const [useProvideViewColumns, useViewColumns] = useInjectionState(
     const hidingViewColumnsMap = ref<Record<string, boolean>>({})
 
     const { hasPersonalViewPermission } = usePersonalViewPermissions(view)
+
+    // Use shared column visibility composable
+    const { loadColumnVisibility, isColumnHiddenForRole } = useColumnVisibility()
 
     const canEditViewFields = hasPersonalViewPermission('viewFieldEdit')
 
@@ -238,6 +242,18 @@ const [useProvideViewColumns, useViewColumns] = useInjectionState(
         }),
         {},
       )
+
+      // Load column visibility data for role-based filtering (skip for public views)
+      if (!isPublic && meta.value?.id) {
+        await loadColumnVisibility(meta.value.id)
+      }
+    }
+
+    // Function to reload column visibility data (called after settings are updated)
+    const reloadColumnVisibility = async () => {
+      if (!isPublic && meta.value?.id) {
+        await loadColumnVisibility(meta.value.id)
+      }
     }
 
     const updateDefaultViewColumnMeta = async (
@@ -599,6 +615,16 @@ const [useProvideViewColumns, useViewColumns] = useInjectionState(
           ) {
             return false
           }
+
+          // Check column role visibility - hide columns disabled for current user role
+          if (
+            metaColumnById.value?.[field.fk_column_id!] &&
+            !isPublic &&
+            isColumnHiddenForRole(metaColumnById.value[field.fk_column_id!])
+          ) {
+            return false
+          }
+
           return field.show && metaColumnById?.value?.[field.fk_column_id!]
         })
         ?.sort((a: Field, b: Field) => a.order - b.order)
@@ -731,9 +757,11 @@ const [useProvideViewColumns, useViewColumns] = useInjectionState(
           const field = fields.value?.find((f) => f.fk_column_id === payload.fk_column_id)
           if (field) {
             const currentColumnField = col || {}
+            // Preserve existing order if available, otherwise use field's current order
+            const newOrder = currentColumnField.order ?? field.order ?? 0
             Object.assign(field, {
               show: currentColumnField.show || isColumnViewEssential(currentColumnField),
-              order: currentColumnField.order || order++,
+              order: newOrder,
               aggregation: currentColumnField?.aggregation ?? CommonAggregations.None,
             })
 
@@ -752,6 +780,10 @@ const [useProvideViewColumns, useViewColumns] = useInjectionState(
         }
       } else if (evt === 'view_column_refresh') {
         loadViewColumns()
+        nextTick(() => reloadData?.({ shouldShowLoading: false }))
+      } else if (evt === 'column_visibility_update') {
+        // Reload column visibility data when visibility settings are updated
+        reloadColumnVisibility()
         nextTick(() => reloadData?.({ shouldShowLoading: false }))
       }
     }
@@ -794,6 +826,7 @@ const [useProvideViewColumns, useViewColumns] = useInjectionState(
       hidingViewColumnsMap,
       hasViewFieldDataEditPermission,
       canUpdateViewMeta,
+      reloadColumnVisibility,
     }
   },
   'useViewColumnsOrThrow',

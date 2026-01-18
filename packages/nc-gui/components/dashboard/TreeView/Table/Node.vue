@@ -67,6 +67,8 @@ const isTableDeleteDialogVisible = ref(false)
 const isTablePermissionsDialogVisible = ref(false)
 const isTableRlsDialogVisible = ref(false)
 const isTableDateDependencyDialogVisible = ref(false)
+const isColumnVisibilityDialogVisible = ref(false)
+const selectedTableForColumnVisibility = ref<SidebarTableNode | null>(null)
 
 const isOptionsOpen = ref(false)
 
@@ -305,6 +307,13 @@ function onRowLevelSecurity() {
 function onDateDependency() {
   isOptionsOpen.value = false
   isTableDateDependencyDialogVisible.value = true
+}
+
+async function openColumnVisibilityDialog(_table: SidebarTableNode) {
+  isOptionsOpen.value = false
+
+  isColumnVisibilityDialogVisible.value = true
+  selectedTableForColumnVisibility.value = _table
 }
 
 /** Cancel renaming view */
@@ -667,6 +676,18 @@ const isMmTable = computed(() => !!table.value?.mm)
                       </NcMenuItem>
                     </NcTooltip>
 
+                    <NcMenuItem
+                      v-if="isUIAllowed('columnVisibilityList', { roles: baseRole, source })"
+                      :data-testid="`sidebar-table-column-visibility-${table.title}`"
+                      class="nc-table-column-visibility"
+                      @click="openColumnVisibilityDialog(table)"
+                    >
+                      <div v-e="['c:table:column-visibility']" class="flex gap-2 items-center">
+                        <GeneralIcon icon="ncEye" class="opacity-80" />
+                        Column Visibility
+                      </div>
+                    </NcMenuItem>
+
                     <NcTooltip :title="tableIconEditReason ? $t(tableIconEditReason) : ''" :disabled="!tableIconEditReason">
                       <NcMenuItemChangeIcon
                         v-e="['c:table:change-icon']"
@@ -903,6 +924,12 @@ const isMmTable = computed(() => !!table.value?.mm)
       v-model:visible="isTableDateDependencyDialogVisible"
       :table-id="table.id"
       :title="table.title"
+    />
+    <DlgColumnVisibility
+      v-if="selectedTableForColumnVisibility"
+      v-model:visible="isColumnVisibilityDialogVisible"
+      :table-id="selectedTableForColumnVisibility.id"
+      :title="selectedTableForColumnVisibility.title"
     />
     <DashboardTreeViewViews v-if="isExpanded" />
   </div>

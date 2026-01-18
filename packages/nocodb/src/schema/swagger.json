@@ -21142,6 +21142,169 @@
           "required": true
         }
       ]
+    },
+    "/api/v1/db/meta/tables/{tableId}/column-visibility-rules": {
+      "parameters": [
+        {
+          "schema": {
+            "$ref": "#/components/schemas/Id",
+            "example": "md_w9gpnaousnfss1",
+            "type": "string"
+          },
+          "name": "tableId",
+          "in": "path",
+          "required": true,
+          "description": "Unique Table ID"
+        }
+      ],
+      "get": {
+        "summary": "Get Column Visibility Rules",
+        "operationId": "db-table-column-visibility-list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "column_name": {
+                        "type": "string"
+                      },
+                      "uidt": {
+                        "type": "string"
+                      },
+                      "disabled": {
+                        "type": "object",
+                        "properties": {
+                          "owner": {
+                            "type": "boolean"
+                          },
+                          "creator": {
+                            "type": "boolean"
+                          },
+                          "viewer": {
+                            "type": "boolean"
+                          },
+                          "editor": {
+                            "type": "boolean"
+                          },
+                          "commenter": {
+                            "type": "boolean"
+                          },
+                          "guest": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        },
+        "description": "Get column visibility rules for a table - controls which roles can see which columns",
+        "tags": [
+          "DB Table Column"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/xc-auth"
+          }
+        ]
+      },
+      "post": {
+        "summary": "Set Column Visibility Rules",
+        "operationId": "db-table-column-visibility-set",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "msg": {
+                      "type": "string",
+                      "example": "Column visibility rules have been updated successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "disabled"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/components/schemas/Id",
+                      "description": "Column ID"
+                    },
+                    "disabled": {
+                      "type": "object",
+                      "description": "Role-based visibility settings",
+                      "properties": {
+                        "owner": {
+                          "type": "boolean"
+                        },
+                        "creator": {
+                          "type": "boolean"
+                        },
+                        "viewer": {
+                          "type": "boolean"
+                        },
+                        "editor": {
+                          "type": "boolean"
+                        },
+                        "commenter": {
+                          "type": "boolean"
+                        },
+                        "guest": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Set column visibility rules for a table - controls which roles can see which columns. Only base owners can modify these settings.",
+        "tags": [
+          "DB Table Column"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/xc-auth"
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -23557,7 +23720,9 @@
                 "pattern": "^fr_[a-z0-9]+$",
                 "maxLength": 32
               },
-              { "type": "null" }
+              {
+                "type": "null"
+              }
             ]
           },
           "required": {
@@ -23644,7 +23809,9 @@
                 "pattern": "^fr_[a-z0-9]+$",
                 "maxLength": 32
               },
-              { "type": "null" }
+              {
+                "type": "null"
+              }
             ]
           },
           "required": {
@@ -24567,7 +24734,10 @@
               },
               "scope": {
                 "type": "string",
-                "enum": ["anyone", "specific"],
+                "enum": [
+                  "anyone",
+                  "specific"
+                ],
                 "description": "anyone = any mention; specific = only mentions of user_ids"
               },
               "user_ids": {
@@ -24587,7 +24757,10 @@
               },
               "mode": {
                 "type": "string",
-                "enum": ["include", "exclude"]
+                "enum": [
+                  "include",
+                  "exclude"
+                ]
               },
               "user_ids": {
                 "type": "array",
@@ -25727,17 +25900,29 @@
           },
           "dependency_linkrow_role": {
             "type": "string",
-            "enum": ["predecessors", "successors"],
+            "enum": [
+              "predecessors",
+              "successors"
+            ],
             "description": "Whether the linkrow field links to predecessors or successors"
           },
           "dependency_connection_type": {
             "type": "string",
-            "enum": ["end-to-start", "end-to-end", "start-to-end", "start-to-start"],
+            "enum": [
+              "end-to-start",
+              "end-to-end",
+              "start-to-end",
+              "start-to-start"
+            ],
             "description": "Which date from predecessor drives which date in successor"
           },
           "dependency_buffer_type": {
             "type": "string",
-            "enum": ["flexible", "fixed", "none"],
+            "enum": [
+              "flexible",
+              "fixed",
+              "none"
+            ],
             "description": "Type of buffer between predecessor end and successor start"
           },
           "dependency_buffer_days": {
@@ -25777,15 +25962,27 @@
           },
           "dependency_linkrow_role": {
             "type": "string",
-            "enum": ["predecessors", "successors"]
+            "enum": [
+              "predecessors",
+              "successors"
+            ]
           },
           "dependency_connection_type": {
             "type": "string",
-            "enum": ["end-to-start", "end-to-end", "start-to-end", "start-to-start"]
+            "enum": [
+              "end-to-start",
+              "end-to-end",
+              "start-to-end",
+              "start-to-start"
+            ]
           },
           "dependency_buffer_type": {
             "type": "string",
-            "enum": ["flexible", "fixed", "none"]
+            "enum": [
+              "flexible",
+              "fixed",
+              "none"
+            ]
           },
           "dependency_buffer_days": {
             "type": "integer",
@@ -30488,7 +30685,12 @@
           },
           "frequency": {
             "type": "string",
-            "enum": ["daily", "weekly", "monthly", "cron"],
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly",
+              "cron"
+            ],
             "description": "Schedule frequency preset or custom cron"
           },
           "config": {
@@ -31100,7 +31302,18 @@
           "resource_type": {
             "type": "string",
             "description": "Type of the trashed resource",
-            "enum": ["table", "view", "field", "dashboard", "widget", "script", "workflow", "extension", "record", "hook"]
+            "enum": [
+              "table",
+              "view",
+              "field",
+              "dashboard",
+              "widget",
+              "script",
+              "workflow",
+              "extension",
+              "record",
+              "hook"
+            ]
           },
           "resource_id": {
             "$ref": "#/components/schemas/Id",
@@ -31162,6 +31375,45 @@
           "list",
           "pageInfo"
         ]
+      },
+      "ColumnRoleVisibility": {
+        "description": "Model for ColumnRoleVisibility - controls column visibility based on user roles",
+        "examples": [
+          {
+            "source_id": "string",
+            "disabled": true,
+            "fk_column_id": "string",
+            "id": "string",
+            "base_id": "string",
+            "role": "string"
+          }
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "disabled": {
+            "$ref": "#/components/schemas/Bool",
+            "description": "Whether the column is hidden for this role"
+          },
+          "fk_column_id": {
+            "type": "string",
+            "description": "Foreign key to the column"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Unique ID"
+          },
+          "base_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role (owner, creator, editor, commenter, viewer, guest)"
+          }
+        },
+        "title": "ColumnRoleVisibility Model",
+        "type": "object"
       }
     },
     "responses": {

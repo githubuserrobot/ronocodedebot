@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { UITypes } from 'nocodb-sdk';
+import { ProjectRoles, UITypes } from 'nocodb-sdk';
 import type { NcContext } from '~/interface/config';
 import { AppHooksListenerService } from '~/services/app-hooks-listener.service';
-import { Audit, PresignedUrl } from '~/models';
+import { Audit, ColumnRoleVisibility, PresignedUrl } from '~/models';
 import { AppHooksService } from '~/services/app-hooks/app-hooks.service';
 import { processConcurrently } from '~/utils/dataUtils';
 
@@ -23,6 +23,9 @@ export class AuditsService {
     },
   ) {
     const audits = await Audit.recordAuditList(context, param);
+
+    // Resolve column IDs hidden for the current user's role (revision history excludes these)
+    const hiddenColumnIds = await this.getHiddenColumnIdsForContext(context);
 
     for (const audit of audits.list) {
       try {
@@ -72,10 +75,63 @@ export class AuditsService {
           }
         }
 
+        // Exclude columns with role visibility disabled from revision history
+        if (hiddenColumnIds.size > 0 && column_meta) {
+          for (const [title, meta] of Object.entries(column_meta)) {
+            if (meta?.id && hiddenColumnIds.has(meta.id)) {
+              delete details.column_meta[title];
+              if (details.data) delete details.data[title];
+              if (details.old_data) delete details.old_data[title];
+            }
+          }
+        }
+
         audit.details = JSON.stringify(details);
       } catch (e) {}
     }
 
     return audits;
+  }
+
+  /**
+   * Returns the set of column IDs that are hidden for the current user's role
+   * (ColumnRoleVisibility.disabled = true). Used to filter revision history.
+   */
+  private async getHiddenColumnIdsForContext(
+    context: NcContext,
+  ): Promise<Set<string>> {
+    if (
+      !context.base_id ||
+      !context.user?.base_roles ||
+      (context.user as any)?.is_api_token
+    ) {
+      return new Set();
+    }
+
+    const userRoles = Object.keys(context.user.base_roles).filter(
+      (role) => context.user.base_roles[role],
+    );
+    const rolePriority = [
+      ProjectRoles.OWNER,
+      ProjectRoles.CREATOR,
+      ProjectRoles.EDITOR,
+      ProjectRoles.COMMENTER,
+      ProjectRoles.VIEWER,
+    ];
+    const userRole =
+      rolePriority.find((role) => userRoles.includes(role)) ??
+      ProjectRoles.VIEWER;
+
+    const visibilityList = await ColumnRoleVisibility.list(
+      context,
+      context.base_id,
+    );
+    const hidden = new Set<string>();
+    for (const v of visibilityList) {
+      if (v.role === userRole && v.disabled && v.fk_column_id) {
+        hidden.add(v.fk_column_id);
+      }
+    }
+    return hidden;
   }
 }

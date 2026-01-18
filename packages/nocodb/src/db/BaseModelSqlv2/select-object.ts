@@ -100,7 +100,7 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
       // hide if column marked as hidden in view
       // of if column is system field and system field is hidden
       if (
-        shouldSkipField(
+        await shouldSkipField(
           fieldsSet,
           viewOrTableColumn,
           view,
@@ -108,6 +108,7 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
           extractPkAndPv || pkAndPvOnly,
           pkAndPvOnly,
           fk_display_value_column_id,
+          baseModel.context,
         )
       ) {
         continue;

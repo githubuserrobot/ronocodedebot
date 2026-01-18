@@ -47,6 +47,7 @@ export enum MetaTable {
   PLUGIN = 'nc_plugins_v2',
   PROJECT_USERS = 'nc_base_users_v2',
   MODEL_ROLE_VISIBILITY = 'nc_disabled_models_for_role_v2',
+  COLUMN_ROLE_VISIBILITY = 'nc_column_role_visibility_v2',
   API_TOKENS = 'nc_api_tokens',
   BOOKMARK_GROUPS = 'nc_bookmark_groups',
   BOOKMARKS = 'nc_bookmarks',
@@ -241,6 +242,7 @@ export enum MetaTableOldV2 {
 export const orderedMetaTables = [
   // Misc leaf tables
   MetaTable.MODEL_ROLE_VISIBILITY,
+  MetaTable.COLUMN_ROLE_VISIBILITY,
   MetaTable.PLUGIN,
   MetaTable.AUDIT,
   MetaTable.ACL,
@@ -494,6 +496,7 @@ export enum CacheScope {
   PLUGIN = 'plugin',
   BASE_USER = 'baseUser',
   MODEL_ROLE_VISIBILITY = 'modelRoleVisibility',
+  COLUMN_ROLE_VISIBILITY = 'columnRoleVisibility',
   API_TOKEN = 'apiToken',
   BOOKMARK_GROUP = 'bookmarkGroup',
   BOOKMARK = 'bookmark',

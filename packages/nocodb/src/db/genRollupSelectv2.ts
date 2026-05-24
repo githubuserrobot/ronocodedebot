@@ -12,9 +12,11 @@ import type { Knex } from 'knex';
 import type {
   ButtonColumn,
   FormulaColumn,
-  LinksColumn,
   LinkToAnotherRecordColumn,
   RollupColumn,
+} from '~/models';
+import {
+  LinksColumn,
 } from '~/models';
 import type { XKnex } from '~/db/CustomKnex';
 import { NcError } from '~/helpers/ncError';
@@ -331,6 +333,13 @@ export default async function genRollupSelectv2(param: {
 
     case RelationTypes.MANY_TO_MANY: {
       profiler.log('Relation: ' + relationColumnOption.type);
+
+      // Virtual link columns — no actual MM table to query
+      if (columnOptions instanceof LinksColumn) {
+        const qb = knex.select(knex.raw('1')).first();
+        return { builder: qb };
+      }
+
       const mmModel = await relationColumnOption.getMMModel(mmContext);
       const mmChildCol = await relationColumnOption.getMMChildColumn(mmContext);
       const mmParentCol = await relationColumnOption.getMMParentColumn(
@@ -346,28 +355,82 @@ export default async function genRollupSelectv2(param: {
         ]);
       }
 
-      const qb = knex(
+      // Use CTE to pre-compute rollup aggregation for all parent rows at once
+      // instead of a correlated subquery that re-executes per row
+      const prejoined = 'prejoined';
+      const mmTn = assocBaseModel.getTnPath(mmModel.table_name);
+      const mmChildColRef = `${mmTn}.${mmChildCol.column_name}`;
+      const childColRef = `"${prejoined}"."${childCol.column_name}"`;
+
+      // Build the rollup SELECT expression for the CTE
+      let rollupSelectSql: string;
+      if (
+        baseModelSqlv2.isPg &&
+        ['sum', 'sumDistinct', 'avgDistinct', 'avg'].includes(
+          columnOptions.rollup_function,
+        ) &&
+        ['bool', 'boolean'].includes(rollupColumn.dt)
+      ) {
+        rollupSelectSql = `${childColRef}::integer`;
+      } else if (
+        ['sum', 'sumDistinct', 'avgDistinct', 'avg'].includes(
+          columnOptions.rollup_function,
+        )
+      ) {
+        rollupSelectSql = childColRef;
+      }
+
+      const cteQuery = knex(
         knex.raw(`?? as ??`, [
           parentBaseModel.getTnPath(parentModel?.table_name),
-          refTableAlias,
+          prejoined,
         ]),
       )
         .innerJoin(
-          assocBaseModel.getTnPath(mmModel.table_name) as any,
-          knex.ref(
-            `${assocBaseModel.getTnPath(mmModel.table_name)}.${
-              mmParentCol.column_name
-            }`,
-          ) as any,
+          mmTn as any,
+          knex.ref(`${mmTn}.${mmParentCol.column_name}`) as any,
           '=',
-          knex.ref(`${refTableAlias}.${parentCol.column_name}`) as any,
-        )
+          knex.ref(`${prejoined}.${parentCol.column_name}`) as any,
+        );
+
+      // Apply soft-delete filter inside CTE (on the prejoined parent alias)
+      const mmSoftDeleteFilter = await getAliasedSoftDeleteFilter(
+        parentBaseModel,
+        prejoined,
+      );
+      if (mmSoftDeleteFilter) {
+        cteQuery.where(mmSoftDeleteFilter);
+      }
+
+      // Apply link relation filters inside CTE
+      await extractLinkRelFiltersAndApply({
+        qb: cteQuery,
+        column,
+        alias: prejoined,
+        table: parentBaseModel.model,
+        baseModel: parentBaseModel,
+        context: parentBaseModel.context,
+      });
+
+      // Generate the rollup function SQL and build the CTE select
+      const isSumAvg = ['sum', 'sumDistinct', 'avgDistinct', 'avg'].includes(
+        columnOptions.rollup_function,
+      );
+      let cteSelectSql: string;
+      if (isSumAvg) {
+        cteSelectSql = `${mmChildColRef} as __grp, COALESCE((${columnOptions.rollup_function}(${rollupSelectSql})), 0) as __val`;
+      } else {
+        cteSelectSql = `${mmChildColRef} as __grp, ${columnOptions.rollup_function}(${childColRef}) as __val`;
+      }
+      cteQuery.select(knex.raw(cteSelectSql));
+      cteQuery.groupBy(knex.ref(mmChildColRef));
+
+      // Outer query selects from CTE, correlated on mmChildCol = childCol
+      const qb = knex(refTableAlias)
+        .select(knex.raw('__val'))
+        .withMaterialized(refTableAlias, cteQuery)
         .where(
-          knex.ref(
-            `${assocBaseModel.getTnPath(mmModel.table_name)}.${
-              mmChildCol.column_name
-            }`,
-          ),
+          knex.ref(`${refTableAlias}.__grp`),
           '=',
           knex.ref(
             `${alias || childBaseModel.getTnPath(childModel.table_name)}.${
@@ -376,30 +439,11 @@ export default async function genRollupSelectv2(param: {
           ),
         );
 
-      // Exclude soft-deleted parent records from MM rollup
-      const mmSoftDeleteFilter = await getAliasedSoftDeleteFilter(
-        parentBaseModel,
-        refTableAlias,
-      );
-      if (mmSoftDeleteFilter) {
-        qb.where(mmSoftDeleteFilter);
-      }
-
-      await extractLinkRelFiltersAndApply({
-        qb: qb,
-        column,
-        alias: refTableAlias,
-        table: parentBaseModel.model,
-        baseModel: parentBaseModel,
-        context: parentBaseModel.context,
-      });
-
       // V2 MO/OO: single-record semantics — limit to 1 row
       if (isBtLikeV2Junction(relationColumn)) {
         qb.limit(1);
       }
 
-      await applyFunction(qb);
       profiler.end();
       return {
         builder: qb,

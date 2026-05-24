@@ -2,6 +2,13 @@ import type { Knex } from 'knex';
 import { MetaTable } from '~/utils/globals';
 
 const up = async (knex: Knex) => {
+  // Clean up any FK that might block later migrations (e.g. nc_092_composite_pk)
+  if (await knex.schema.hasTable(MetaTable.COLUMN_ROLE_VISIBILITY)) {
+    await knex.raw(
+      `ALTER TABLE ${MetaTable.COLUMN_ROLE_VISIBILITY} DROP CONSTRAINT IF EXISTS ${MetaTable.COLUMN_ROLE_VISIBILITY}_fk_column_id_foreign`,
+    );
+  }
+
   await knex.schema.createTable(MetaTable.COLUMN_ROLE_VISIBILITY, (table) => {
     table.string('id', 20).primary().notNullable();
 
@@ -11,7 +18,6 @@ const up = async (knex: Knex) => {
     table.string('source_id', 20);
 
     table.string('fk_column_id', 20);
-    table.foreign('fk_column_id').references(`${MetaTable.COLUMNS}.id`);
 
     table.string('role', 45);
     table.boolean('disabled').defaultTo(false);

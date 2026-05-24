@@ -3,9 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUI_DIR="$ROOT_DIR/packages/nc-gui"
+NOCODB_PKG="$ROOT_DIR/packages/nocodb/package.json"
 
 # Allow node to use 8 GB of ram (preserve existing NODE_OPTIONS if present)
 export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=8192"
+
+# Ensure nocodb uses the locally built GUI instead of the published version
+if grep -q '"nc-lib-gui": "link:' "$NOCODB_PKG"; then
+  echo "nc-lib-gui already linked locally."
+else
+  echo "Patching nocodb/package.json to link local nc-lib-gui..."
+  sed -i.bak 's|"nc-lib-gui": "[^"]*"|"nc-lib-gui": "link:../nc-lib-gui"|' "$NOCODB_PKG"
+  rm -f "$NOCODB_PKG.bak"
+fi
 
 echo "Building nocodb-sdk..."
 pnpm --dir "$ROOT_DIR" --filter=nocodb-sdk run build

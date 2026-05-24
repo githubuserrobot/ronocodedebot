@@ -1,3 +1,4 @@
+import { trace } from '~/tracing/decorator';
 import { Logger } from '@nestjs/common';
 import autoBind from 'auto-bind';
 import BigNumber from 'bignumber.js';

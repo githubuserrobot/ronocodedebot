@@ -6,7 +6,9 @@ export NUXT_PUBLIC_NC_BACKEND_URL=http://localhost:8080
 export PORT=8080
 export NC_REDIS_URL=redis://127.0.0.1:6379
 export NC_ATTACHMENT_EXPIRE_SECONDS=86400
+export NC_GUI_DIST_PATH=/home/ubuntu/repos/nocodb/packages/nc-lib-gui/lib/dist
 export NC_KEEP_CACHE=true
+export NC_DISABLE_TELE=true
 export NC_MEMORY=712
 export REDIS_MEM=128MB
 
@@ -25,6 +27,9 @@ echo "Node: $(node -v)  Pnpm: $(pnpm -v 2>/dev/null || echo 'not found')"
 redis-cli config set maxmemory $REDIS_MEM
 
 cd /home/ubuntu/repos/nocodb
+
+# To rebuild the GUI locally before starting:
+#   pnpm --filter=nocodb-sdk run build && pnpm --filter=nc-gui run build:copy
 
 # Use pnpm from PATH (set up by nvm's npm global bin or corepack)
 pnpm start:prod

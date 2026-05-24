@@ -16,7 +16,7 @@ server.use(
 server.set('view engine', 'ejs');
 
 async function bootstrap() {
-  await otelSDK.start();
+  await otelSDK?.start();
   const httpServer = server.listen(process.env.PORT || 8080, async () => {
     server.use(await Noco.init({}, httpServer, server));
   });

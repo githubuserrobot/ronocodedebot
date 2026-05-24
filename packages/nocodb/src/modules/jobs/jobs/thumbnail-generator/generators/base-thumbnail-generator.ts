@@ -58,6 +58,7 @@ export abstract class BaseThumbnailGenerator {
         }
 
         const resizedImage = await sharpImage
+          .rotate()
           .resize(undefined, height, {
             fit: sharp.fit.cover,
             kernel: 'lanczos3',

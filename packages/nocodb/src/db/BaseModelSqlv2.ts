@@ -1647,6 +1647,19 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  public async multipleMmListFast(
+    param: {
+      colId: string;
+      parentIds: any[];
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleMmListFast(
+      param,
+      args,
+    );
+  }
+
   public async multipleMmListCount({ colId, parentIds }) {
     return relationDataFetcher({
       baseModel: this,

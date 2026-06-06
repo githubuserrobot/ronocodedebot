@@ -979,7 +979,11 @@ export const relationDataFetcher = (param: {
         ]);
         finalQb.distinctOn(`${vtn}.${vcn}`, `${childTn}.${columnName}`);
       } else if (columnName) {
-        finalQb.groupBy(`${vtn}.${vcn}`, `${vtn}.${vrcn}`, `${childTn}.${columnName}`);
+        finalQb.groupBy(
+          `${vtn}.${vcn}`,
+          `${vtn}.${vrcn}`,
+          `${childTn}.${columnName}`,
+        );
       }
 
       await baseModel.applySortAndFilter({

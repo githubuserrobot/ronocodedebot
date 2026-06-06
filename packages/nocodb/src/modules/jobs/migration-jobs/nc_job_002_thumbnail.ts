@@ -314,7 +314,7 @@ export class ThumbnailMigration {
             }
 
             if (fileReference.thumbnail_generated) {
-              this.log("found thumbnail, skipping")
+              this.log('found thumbnail, skipping');
               continue;
             }
 

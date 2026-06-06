@@ -1,6 +1,6 @@
-import { otelSDK } from './tracing/tracing'
 import cors from 'cors';
 import express from 'express';
+import { otelSDK } from './tracing/tracing';
 import Noco from '~/Noco';
 
 const server = express();

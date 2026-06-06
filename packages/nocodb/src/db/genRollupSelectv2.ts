@@ -15,10 +15,8 @@ import type {
   LinkToAnotherRecordColumn,
   RollupColumn,
 } from '~/models';
-import {
-  LinksColumn,
-} from '~/models';
 import type { XKnex } from '~/db/CustomKnex';
+import { LinksColumn } from '~/models';
 import { NcError } from '~/helpers/ncError';
 import { RelationManager } from '~/db/relation-manager';
 import { Column, Model } from '~/models';
@@ -34,7 +32,8 @@ export default async function genRollupSelectv2(param: {
   columnOptions: RollupColumn | LinksColumn;
   parentColumns?: CircularRefContext;
   nestedLevel?: number;
-}): Promise<{ builder: Knex.QueryBuilder | any }> {
+  outerQb?: Knex.QueryBuilder & Knex.QueryInterface;
+}): Promise<{ builder: Knex.QueryBuilder | any; expression?: Knex.Raw }> {
   const { baseModelSqlv2, knex, alias, columnOptions, nestedLevel = 0 } = param;
   let { parentColumns } = param;
 
@@ -385,13 +384,12 @@ export default async function genRollupSelectv2(param: {
           parentBaseModel.getTnPath(parentModel?.table_name),
           prejoined,
         ]),
-      )
-        .innerJoin(
-          mmTn as any,
-          knex.ref(`${mmTn}.${mmParentCol.column_name}`) as any,
-          '=',
-          knex.ref(`${prejoined}.${parentCol.column_name}`) as any,
-        );
+      ).innerJoin(
+        mmTn as any,
+        knex.ref(`${mmTn}.${mmParentCol.column_name}`) as any,
+        '=',
+        knex.ref(`${prejoined}.${parentCol.column_name}`) as any,
+      );
 
       // Apply soft-delete filter inside CTE (on the prejoined parent alias)
       const mmSoftDeleteFilter = await getAliasedSoftDeleteFilter(
@@ -424,6 +422,29 @@ export default async function genRollupSelectv2(param: {
       }
       cteQuery.select(knex.raw(cteSelectSql));
       cteQuery.groupBy(knex.ref(mmChildColRef));
+
+      const { outerQb } = param;
+
+      if (outerQb) {
+        // Optimized path: add CTE once at outer query level + LEFT JOIN
+        // instead of a correlated subquery that re-executes per row
+        outerQb.withMaterialized(refTableAlias, cteQuery);
+        outerQb.leftJoin(
+          refTableAlias,
+          `${refTableAlias}.__grp` as any,
+          '=',
+          knex.ref(
+            `${alias || childBaseModel.getTnPath(childModel.table_name)}.${
+              childCol.column_name
+            }`,
+          ) as any,
+        );
+        profiler.end();
+        return {
+          builder: knex.raw(`"${refTableAlias}"."__val"`),
+          expression: knex.raw(`"${refTableAlias}"."__val"`),
+        };
+      }
 
       // Outer query selects from CTE, correlated on mmChildCol = childCol
       const qb = knex(refTableAlias)

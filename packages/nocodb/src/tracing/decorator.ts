@@ -1,6 +1,5 @@
 import opentelemetry from '@opentelemetry/api';
 
-
 const tracer = opentelemetry.trace.getTracer('decorator');
 type OpenTelemetryTracer = ReturnType<typeof opentelemetry.trace.getTracer>;
 
@@ -8,8 +7,7 @@ type OpenTelemetryTracer = ReturnType<typeof opentelemetry.trace.getTracer>;
  * A decorator that enables otel tracing on a method.
  * @param method
  */
-export function trace(
-): (
+export function trace(): (
   target: any,
   methodName: string,
   descriptor: PropertyDescriptor,

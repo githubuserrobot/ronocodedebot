@@ -32,7 +32,7 @@ import { sanitize } from '~/helpers/sqlSanitize';
 import { type BarcodeColumn, BaseUser, type QrCodeColumn } from '~/models';
 import Filter from '~/models/Filter';
 import { getAliasGenerator } from '~/utils';
-import { trace } from '~/tracing/decorator'
+import { trace } from '~/tracing/decorator';
 import { validateAndStringifyJson } from '~/utils/tsUtils';
 import { handleCurrentUserFilter } from '~/helpers/conditionHelpers';
 

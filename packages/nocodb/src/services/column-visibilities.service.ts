@@ -5,7 +5,7 @@ import type { UIAclEvent } from '~/services/app-hooks/interfaces';
 import { AppHooksService } from '~/services/app-hooks/app-hooks.service';
 import { validatePayload } from '~/helpers';
 import { NcError } from '~/helpers/catchError';
-import { Base, Model, ColumnRoleVisibility, Column } from '~/models';
+import { Base, Column, ColumnRoleVisibility, Model } from '~/models';
 
 export interface ColumnVisibilityRuleReqType {
   id: string;

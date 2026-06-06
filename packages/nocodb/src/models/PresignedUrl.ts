@@ -116,7 +116,7 @@ export default class PresignedUrl {
     },
     ncMeta = Noco.ncMeta,
   ) {
-    var ignoreCache = param.ignoreCache ?? false;
+    const ignoreCache = param.ignoreCache ?? false;
     const isUrl = /^https?:\/\//i.test(param.pathOrUrl);
 
     let path = (

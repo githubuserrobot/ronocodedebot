@@ -1,9 +1,9 @@
+import process from 'process';
 import {
   BatchSpanProcessor,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import process from 'process';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { NestInstrumentation } from '@opentelemetry/instrumentation-nestjs-core';
@@ -11,7 +11,6 @@ import { Resource } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import * as dotenv from 'dotenv';
-
 
 const collectorOptions = {
   url: 'http://localhost:4317',

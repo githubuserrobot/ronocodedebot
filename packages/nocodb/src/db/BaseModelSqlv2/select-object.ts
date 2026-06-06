@@ -465,15 +465,15 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
             break;
           }
 
+          const rollupResult = await genRollupSelectv2({
+            baseModelSqlv2: baseModel,
+            knex: baseModel.dbDriver,
+            alias,
+            columnOptions: rollupColOptions,
+            outerQb: qb,
+          });
           qb.select(
-            (
-              await genRollupSelectv2({
-                baseModelSqlv2: baseModel,
-                knex: baseModel.dbDriver,
-                alias,
-                columnOptions: rollupColOptions,
-              })
-            ).builder.as(getAs(column)),
+            (rollupResult.expression ?? rollupResult.builder).as(getAs(column)),
           );
           break;
         }

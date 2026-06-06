@@ -1,4 +1,3 @@
-import { trace } from '~/tracing/decorator';
 import { Logger } from '@nestjs/common';
 import autoBind from 'auto-bind';
 import BigNumber from 'bignumber.js';
@@ -78,6 +77,7 @@ import type {
   SelectOption,
   User,
 } from '~/models';
+import { trace } from '~/tracing/decorator';
 import { LTARColsUpdater } from '~/db/BaseModelSqlv2/ltar-cols-updater';
 import { BaseModelDelete } from '~/db/BaseModelSqlv2/delete';
 import { ncIsStringHasValue } from '~/db/field-handler/utils/handlerUtils';

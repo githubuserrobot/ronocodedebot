@@ -77,6 +77,7 @@ import type {
   SelectOption,
   User,
 } from '~/models';
+import { trace } from '~/tracing/decorator';
 import { LTARColsUpdater } from '~/db/BaseModelSqlv2/ltar-cols-updater';
 import { BaseModelDelete } from '~/db/BaseModelSqlv2/delete';
 import { ncIsStringHasValue } from '~/db/field-handler/utils/handlerUtils';
@@ -646,6 +647,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipSortBasedOnOrderCol?: boolean;
       ignoreRls?: boolean;
       deletedOnly?: boolean;
+      ignoreCache?: boolean;
     } = {},
   ): Promise<any> {
     const {
@@ -657,6 +659,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       skipSortBasedOnOrderCol = false,
       ignoreRls: ignoreRlsOpt = false,
       deletedOnly = false,
+      ignoreCache: _ignoreCache = false,
     } = options;
 
     const columns = await this.model.getColumns(this.context);
@@ -1640,6 +1643,19 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     args: { limit?; offset?; fieldsSet?: Set<string> } = {},
   ) {
     return relationDataFetcher({ baseModel: this, logger }).multipleMmList(
+      param,
+      args,
+    );
+  }
+
+  public async multipleMmListFast(
+    param: {
+      colId: string;
+      parentIds: any[];
+    },
+    args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+  ) {
+    return relationDataFetcher({ baseModel: this, logger }).multipleMmListFast(
       param,
       args,
     );
@@ -7128,6 +7144,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return d;
   }
 
+  @trace()
   protected async _convertAttachmentType(
     attachmentColumns: Record<string, any>[],
     d: Record<string, any>,

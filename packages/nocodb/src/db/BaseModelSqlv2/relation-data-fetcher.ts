@@ -864,6 +864,151 @@ export const relationDataFetcher = (param: {
       return _parentIds.map((id) => gs[id] || []);
     },
 
+    // Optimized M2M batch loader: uses direct JOIN + DISTINCT ON (PG) or GROUP BY (others)
+    // instead of unionAll batching. Chunks large parent ID sets for better query plans.
+    async multipleMmListFast(
+      {
+        colId,
+        parentIds: _parentIds,
+      }: {
+        colId: string;
+        parentIds: any[];
+      },
+      args: { limit?; offset?; fieldsSet?: Set<string> } = {},
+    ) {
+      const parentIds = [...new Set(_parentIds)];
+
+      // Chunk large parentIds arrays to minimize WHERE IN parameter count
+      const CHUNK_SIZE = 50;
+      if (parentIds.length > CHUNK_SIZE) {
+        const chunks: any[][] = [];
+        for (let i = 0; i < parentIds.length; i += CHUNK_SIZE)
+          chunks.push(parentIds.slice(i, i + CHUNK_SIZE));
+
+        const results = await Promise.all(
+          chunks.map((chunk) =>
+            this.multipleMmListFast({ colId, parentIds: chunk }, args),
+          ),
+        );
+
+        const resultMap = new Map();
+        for (const chunkResult of results) {
+          chunkResult.forEach((items) => {
+            if (items?.length > 0) {
+              const originalIdx = _parentIds.indexOf(items[0]?.[GROUP_COL]);
+              if (originalIdx !== -1)
+                resultMap.set(_parentIds[originalIdx], items);
+            }
+          });
+        }
+        return _parentIds.map((id) => resultMap.get(id) || []);
+      }
+
+      const { where, sort, ...rest } = baseModel._getListArgs(args as any);
+      const relColumn = (
+        await baseModel.model.getColumns(baseModel.context)
+      ).find((c) => c.id === colId);
+      const relColOptions = (await relColumn.getColOptions(
+        baseModel.context,
+      )) as LinkToAnotherRecordColumn;
+
+      // Parallelize metadata lookups
+      const [mmTable, mmChildCol, mmParentCol, childCol, parentCol] =
+        await Promise.all([
+          relColOptions.getMMModel(baseModel.context),
+          relColOptions.getMMChildColumn(baseModel.context),
+          relColOptions.getMMParentColumn(baseModel.context),
+          relColOptions.getChildColumn(baseModel.context),
+          relColOptions.getParentColumn(baseModel.context),
+        ]);
+
+      if (!mmTable) return;
+
+      const vcn = mmChildCol.column_name;
+      const vrcn = mmParentCol.column_name;
+      const cn = childCol.column_name;
+
+      const [childTable, parentTable] = await Promise.all([
+        parentCol.getModel(baseModel.context),
+        childCol.getModel(baseModel.context),
+      ]);
+      const [parentTableCols, childTableCols] = await Promise.all([
+        parentTable.getColumns(baseModel.context),
+        childTable.getColumns(baseModel.context),
+      ]);
+
+      const columnName = childTable.displayValue?.column_name;
+      const qb = baseModel.dbDriver();
+      const childBaseModel = await Model.getBaseModelSQL(baseModel.context, {
+        dbDriver: baseModel.dbDriver,
+        model: childTable,
+      });
+
+      // Minimize selected columns: only PK(s) and display value by default
+      let fieldsSetToUse = args.fieldsSet;
+      if (!fieldsSetToUse) {
+        const pkTitles = (
+          childTable.primaryKeys?.length
+            ? childTable.primaryKeys
+            : childTableCols.filter((c) => (c as any).pk)
+        ).map((c) => c.title);
+        const displayCol =
+          childTableCols.find((c) => c.column_name === columnName) ||
+          childTable.displayValue;
+        const titles = [...pkTitles];
+        if (displayCol?.title) titles.push(displayCol.title);
+        fieldsSetToUse = new Set(titles);
+      }
+      await childBaseModel.selectObject({ qb, fieldsSet: fieldsSetToUse });
+
+      // Use getTnPath for PG schema qualification
+      const vtn = baseModel.getTnPath(mmTable);
+      const childTn = baseModel.getTnPath(childTable);
+
+      const finalQb = qb
+        .select(`${vtn}.${vrcn}`, `${vtn}.${vcn} as ${GROUP_COL}`)
+        .from(vtn)
+        .join(childTn, `${childTn}.${cn}`, `${vtn}.${vrcn}`)
+        .whereIn(`${vtn}.${vcn}`, parentIds);
+
+      // DISTINCT ON for PG, GROUP BY for others — ensures one row per parent
+      if (baseModel.isPg && columnName) {
+        finalQb.orderBy([
+          { column: `${vtn}.${vcn}`, order: 'asc' },
+          { column: `${childTn}.${columnName}`, order: 'asc' },
+        ]);
+        finalQb.distinctOn(`${vtn}.${vcn}`, `${childTn}.${columnName}`);
+      } else if (columnName) {
+        finalQb.groupBy(
+          `${vtn}.${vcn}`,
+          `${vtn}.${vrcn}`,
+          `${childTn}.${columnName}`,
+        );
+      }
+
+      await baseModel.applySortAndFilter({
+        table: childTable,
+        where,
+        qb: finalQb,
+        sort,
+      });
+
+      const children = await childBaseModel.execAndParse(
+        finalQb,
+        childTableCols,
+      );
+
+      const proto = await childBaseModel.getProto();
+      const gs = groupBy(
+        children.map((c) => {
+          c.__proto__ = proto;
+          return c;
+        }),
+        GROUP_COL,
+      );
+      return _parentIds.map((id) => gs[id] || []);
+    },
+
     async multipleMmListCount({ colId, parentIds }) {
       const relColumn = (
         await baseModel.model.getColumns(baseModel.context)

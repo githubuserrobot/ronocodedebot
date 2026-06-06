@@ -32,6 +32,7 @@ import { sanitize } from '~/helpers/sqlSanitize';
 import { type BarcodeColumn, BaseUser, type QrCodeColumn } from '~/models';
 import Filter from '~/models/Filter';
 import { getAliasGenerator } from '~/utils';
+import { trace } from '~/tracing/decorator';
 import { validateAndStringifyJson } from '~/utils/tsUtils';
 import { handleCurrentUserFilter } from '~/helpers/conditionHelpers';
 
@@ -40,7 +41,6 @@ dayjs.extend(timezone);
 
 // tod: tobe fixed
 // extend(customParseFormat);
-
 export default async function conditionV2(
   baseModelSqlv2: IBaseModelSqlV2,
   conditionObj: Filter | FilterType | FilterType[] | Filter[],
@@ -447,13 +447,22 @@ const parseConditionV2 = async (
         filter.comparison_op === 'notempty'
       )
         filter.value = '';
-      let _field = sanitize(
-        customWhereClause
-          ? filter.value
-          : alias
-          ? `${alias}.${column.column_name}`
-          : column.column_name,
-      );
+      let _field: any;
+      if (!customWhereClause && column.uidt === UITypes.Formula) {
+        const formulaQb = await baseModelSqlv2.getSelectQueryBuilderForFormula(
+          column,
+          alias,
+        );
+        _field = (formulaQb as any)?.builder ?? formulaQb;
+      } else {
+        _field = sanitize(
+          customWhereClause
+            ? filter.value
+            : alias
+            ? `${alias}.${column.column_name}`
+            : column.column_name,
+        );
+      }
       let _val = customWhereClause ? customWhereClause : filter.value;
       handleCurrentUserFilter(context, {
         column,

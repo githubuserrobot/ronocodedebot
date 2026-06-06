@@ -82,6 +82,7 @@ import * as nc_091_unify_model from '~/meta/migrations/v2/nc_091_unify_model';
 import * as nc_092_composite_pk from '~/meta/migrations/v2/nc_092_composite_pk';
 import * as nc_093_oauth_server from '~/meta/migrations/v2/nc_093_oauth_server';
 import * as nc_094_add_meta_to_filter_exp_v2 from '~/meta/migrations/v2/nc_094_add_meta_to_filter_exp_v2';
+import * as nc_custom_001_column_role_visibility from '~/meta/migrations/v2/nc_custom_001_column_role_visibility';
 
 import * as nc_096_deprecate_unused from '~/meta/migrations/v2/nc_096_deprecate_unused';
 import * as nc_097_unify_schema from '~/meta/migrations/v2/nc_097_unify_schema';
@@ -180,6 +181,7 @@ export default class XcMigrationSourcev2 {
       'nc_094_add_meta_to_filter_exp_v2',
       'nc_096_deprecate_unused',
       'nc_097_unify_schema',
+      'nc_custom_001_column_role_visibility',
       'nc_098_default_workspace',
     ]);
   }
@@ -360,6 +362,8 @@ export default class XcMigrationSourcev2 {
         return nc_096_deprecate_unused;
       case 'nc_097_unify_schema':
         return nc_097_unify_schema;
+      case 'nc_custom_001_column_role_visibility':
+        return nc_custom_001_column_role_visibility;
       case 'nc_098_default_workspace':
         return nc_098_default_workspace;
     }

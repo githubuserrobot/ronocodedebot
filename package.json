@@ -33,6 +33,7 @@
     "integrations:build": "cd ./packages/noco-integrations/ && pnpm i && pnpm run build",
     "start:frontend": "pnpm --filter=nc-gui run dev",
     "start:backend": "pnpm --filter=nocodb run start",
+    "start:prod": "pnpm --filter=nocodb run start:prod",
     "prepare": "husky install",
     "preinstall": "npx only-allow pnpm",
     "registerIntegrations": "pnpm --filter=nocodb run registerIntegrations",
@@ -102,6 +103,9 @@
       "sharp",
       "sqlite3",
       "vue-demi"
-    ]
+    ],
+    "dependencies": {
+    "@productdevbook/chatwoot": "^2.0.0"
+    }
   }
 }

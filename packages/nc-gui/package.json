@@ -21,6 +21,8 @@
   "web-types": "web-types.json",
   "scripts": {
     "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "build:copy": "pnpm run generate; rm -rf ../nc-lib-gui/lib/dist/; rsync -rvzh ./dist/ ../nc-lib-gui/lib/dist/",
     "lint": "eslint --ext \".js,.jsx,.ts,.tsx,.vue\" --fix --ignore-path .gitignore .",
     "preinstall": "npx only-allow pnpm",
     "postinstall": "nuxt prepare"
@@ -125,7 +127,8 @@
     "monacopilot": "^1.2.2",
     "nc-analytics": "^0.0.6",
     "nc-jsep": "^1.7.5",
-    "nocodb-sdk": "workspace:^",
+    "nc-lib-gui": "file:../nc-lib-gui",
+    "nocodb-sdk": "link:/Users/quinnjarrell/repos/ronocodedebot/packages/nocodb-sdk",
     "nocodb-sdk-v2": "workspace:^",
     "papaparse": "^5.5.2",
     "pdfobject": "^2.3.0",

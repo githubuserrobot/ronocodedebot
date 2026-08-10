@@ -33,6 +33,7 @@
     "watch:run": "cross-env NODE_ENV=development NC_DISABLE_TELE=true ENTRYPOINT=src/run/docker rspack --config rspack.dev.config.js",
     "watch:run:mysql": "cross-env NODE_ENV=development NC_DISABLE_TELE=true ENTRYPOINT=src/run/dockerRunMysql rspack --config rspack.dev.config.js",
     "watch:run:pg": "cross-env NODE_ENV=development NC_DISABLE_TELE=true ENTRYPOINT=src/run/dockerRunPG rspack --config rspack.dev.config.js",
+    "build:prod": "cross-env NODE_ENV=production ENTRYPOINT=src/run/docker rspack build --config rspack.prod.config.js",
     "mail": "email dev --dir src/services/mail/templates --port 8001"
   },
   "dependencies": {

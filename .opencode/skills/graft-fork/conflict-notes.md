@@ -41,6 +41,7 @@ intentionally not listed; use `git log --oneline <release>..fork/<release>`):
 | 5 | fix: treat AutoNumber as numeric in aggregates | [24/29] |
 | 6 | fix: use formula expressions in filters | formula-filter fix (the [1/29] link-filter block itself was dropped) |
 | 7 | feat: implement per-column role visibility | [26/29] + [27/29] + "Hide columns from audit too" follow-up |
+| 8 | chore: add bare-metal precompile and deploy tooling | rspack.prod.config.js (backend TS→JS), `build:prod`, scripts/build_deploy.sh, GUI build fixes |
 
 Pre-squash full history (all 29 commits + original hashes) is preserved on the
 backup branch `backup/pre-squash-fork-2026.08.0`.

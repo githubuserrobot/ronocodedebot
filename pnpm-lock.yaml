@@ -402,7 +402,7 @@ importers:
         specifier: file:../nc-lib-gui
         version: file:packages/nc-lib-gui
       nocodb-sdk:
-        specifier: workspace:^
+        specifier: link:/Users/quinnjarrell/repos/ronocodedebot/packages/nocodb-sdk
         version: link:../nocodb-sdk
       nocodb-sdk-v2:
         specifier: workspace:^
